@@ -10,6 +10,7 @@ import dbus
 
 from functools import partial
 from pymodbus.client.sync import ModbusTcpClient
+from pymodbus.transaction import ModbusRtuFramer
 
 # --------------------------------------------------
 # CONFIGURATION
@@ -23,7 +24,7 @@ VERSION = "1.0"
 
 # Dingtian Modbus TCP settings
 
-MODBUS_HOST = "192.168.1.100"
+MODBUS_HOST = "192.169.1.100"
 MODBUS_PORT = 502
 MODBUS_UNIT_ID = 1
 MODBUS_POLL_INTERVAL = 0.5
@@ -186,7 +187,8 @@ class GensetIOController:
         self.modbus_client = ModbusTcpClient(
             MODBUS_HOST,
             port=MODBUS_PORT,
-            timeout=MODBUS_SOCKET_TIMEOUT
+            timeout=MODBUS_SOCKET_TIMEOUT,
+            framer=ModbusRtuFramer
         )
 
         connected = False
