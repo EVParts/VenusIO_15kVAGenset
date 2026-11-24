@@ -115,7 +115,7 @@ RELAYS = {
     },
     "reverse_power_detection": {
         "name": "Reverse Power Detection Signal",
-        "group": 345,
+        "group": "Genset",
         "initial": 0,
     },
 }
