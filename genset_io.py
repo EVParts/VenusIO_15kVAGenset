@@ -6,6 +6,7 @@ import sys
 import signal
 import json
 import threading
+import dbus
 
 from functools import partial
 from pymodbus.client.sync import ModbusTcpClient
@@ -398,10 +399,16 @@ class GensetIOController:
             self.service.add_path(base + "/Settings/Group", value=INPUT_GROUP)
             self.service.add_path(base + "/Settings/Type", value=0)
 
-            # Preserve the existing JSON-encoded Labels representation.
-
-            self.service.add_path(base + "/Settings/Labels", value=json.dumps(config["labels"]))
-
+            # Map each integer input value to its displayed text label.
+            # The D-Bus value is a JSON-encoded list of strings.
+            self.service.add_path(
+                base + "/Settings/Labels",
+                value=dbus.Array(
+                    [dbus.String(label) for label in config["labels"]],
+                    signature="s",
+                    variant_level=1
+                )
+            )
             self.service.add_path(base + "/Settings/ValidTypes", value=1)
             self.service.add_path(base + "/Settings/ShowUIInput", value=6)
 
