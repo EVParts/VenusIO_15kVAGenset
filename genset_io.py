@@ -32,42 +32,46 @@ MODBUS_SOCKET_TIMEOUT = 1.0
 MODBUS_INPUT_REGISTER_START = 0x0016
 MODBUS_RELAY_REGISTER_START = 0x0036
 
-INPUT_GROUP = "Genset Inputs"
-RELAY_GROUP = "Genset Relays"
-
 INPUTS = {
     "generator": {
         "name": "Off Button",
+        "group": "Buttons",
         "initial": 0,
         "labels": ["Released", "Pressed"],
     },
     "cabin_lights": {
         "name": "On Button",
+        "group": "Buttons",
         "initial": 0,
         "labels": ["Released", "Pressed"],
     },
     "exterior_lights": {
         "name": "ChargeOnly Button",
+        "group": "Buttons",
         "initial": 0,
         "labels": ["Released", "Pressed"],
     },
     "water_pump": {
         "name": "Off LED State",
+        "group": "LEDs",
         "initial": 0,
         "labels": ["Off", "On"],
     },
     "shore_power": {
         "name": "On LED State",
+        "group": "LEDs",
         "initial": 0,
         "labels": ["Off", "On"],
     },
     "charger": {
         "name": "ChargeOnly LED State",
+        "group": "LEDs",
         "initial": 0,
         "labels": ["Off", "On"],
     },
     "bilge_alarm": {
         "name": "BMS Wake State",
+        "group": "BMS",
         "initial": 0,
         "labels": ["Inactive", "Active"],
     },
@@ -76,34 +80,42 @@ INPUTS = {
 RELAYS = {
     "off_button_led": {
         "name": "Off Button LED",
+        "group": "LEDs",
         "initial": 0,
     },
     "on_button_led": {
         "name": "On Button LED",
+        "group": "LEDs",
         "initial": 0,
     },
     "charge_button_led": {
         "name": "ChargeOnly Button LED",
+        "group": "LEDs",
         "initial": 0,
     },
     "bms_wake": {
         "name": "BMS Wake Signal",
+        "group": "BMS",
         "initial": 0,
     },
     "dse_remote_start": {
         "name": "DSE Remote Start",
+        "group": "Genset",
         "initial": 0,
     },
     "dse_lock_keypad_mode": {
         "name": "DSE Lock Keypad Mode Request",
+        "group": "Genset",
         "initial": 0,
     },
     "earth_leakage_reset": {
         "name": "Earth Leakage Reset",
+        "group": "Genset",
         "initial": 0,
     },
     "reverse_power_detection": {
         "name": "Reverse Power Detection Signal",
+        "group": 345,
         "initial": 0,
     },
 }
@@ -177,6 +189,13 @@ class GensetIOController:
                     if not all(isinstance(label, str) for label in labels):
                         raise ValueError(f"Input {device_id} labels must be strings")
 
+                group = config.get("group", "")
+
+                if not isinstance(group, str):
+                    raise ValueError(f"Invalid group for {device_id}: must be a string")
+
+                if len(group.encode("utf-8")) > 32:
+                    raise ValueError(f"Group name for {device_id} exceeds 32 UTF-8 bytes")
     # --------------------------------------------------
     # MODBUS INTERFACE
     # --------------------------------------------------
@@ -398,7 +417,7 @@ class GensetIOController:
             self.service.add_path(base + "/Value", value=config["initial"])
             self.service.add_path(base + "/Status", value=0)
             self.service.add_path(base + "/Settings/CustomName", value=name)
-            self.service.add_path(base + "/Settings/Group", value=INPUT_GROUP)
+            self.service.add_path(base + "/Settings/Group", config["group"])
             self.service.add_path(base + "/Settings/Type", value=0)
 
             # Map each integer input value to its displayed text label.
