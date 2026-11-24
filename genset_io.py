@@ -1,9 +1,9 @@
-
 #!/usr/bin/env python3
 
 import os
 import sys
 import signal
+import json
 
 from functools import partial
 
@@ -29,30 +29,37 @@ INPUTS = {
     "generator": {
         "name": "Off Button",
         "initial": 0,
+        "labels": ["Released", "Pressed"],
     },
     "cabin_lights": {
         "name": "On Button",
         "initial": 0,
+        "labels": ["Released", "Pressed"],
     },
     "exterior_lights": {
         "name": "ChargeOnly Button",
         "initial": 0,
+        "labels": ["Released", "Pressed"],
     },
     "water_pump": {
         "name": "Off LED State",
         "initial": 0,
+        "labels": ["Off", "On"],
     },
     "shore_power": {
         "name": "On LED State",
         "initial": 0,
+        "labels": ["Off", "On"],
     },
     "charger": {
         "name": "ChargeOnly LED State",
         "initial": 0,
+        "labels": ["Off", "On"],
     },
     "bilge_alarm": {
         "name": "BMS Wake State",
         "initial": 0,
+        "labels": ["Inactive", "Active"],
     }
 }
 
@@ -305,6 +312,13 @@ def create_dbus_service():
             value=0
         )
 
+        # Map each integer input value to its displayed text label.
+        # The D-Bus value is a JSON-encoded list of strings.
+        service.add_path(
+            base + "/Settings/Labels",
+            value=json.dumps(config["labels"])
+        )
+
         # Type 0 = discrete indicator
         service.add_path(
             base + "/Settings/ValidTypes",
@@ -417,7 +431,7 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
 
     print(
-        f"{PRODUCT_NAME} IO running: {len(INPUTS)} inputs, "
+        f"Genset IO running: {len(INPUTS)} inputs, "
         f"{len(RELAYS)} relays"
     )
 
