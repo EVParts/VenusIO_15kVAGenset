@@ -368,7 +368,7 @@ class GensetIOController:
         for input_id, value in input_states.items():
             self.service[f"/GenericInput/{input_id}/Value"] = value
 
-        psu_load_avg = psutil.get_load_avg()
+        psu_load_avg = psutil.getloadavg()
         self.service[f'GenericInput/cpu_load_avg_1'] = psu_load_avg[0]
         self.service[f'GenericInput/cpu_load_avg_5'] = psu_load_avg[0]
         self.service[f'GenericInput/cpu_load_avg_15'] = psu_load_avg[0]
