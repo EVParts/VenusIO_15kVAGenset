@@ -448,7 +448,7 @@ class GensetIOController:
             )
             self.service.add_path(base + "/Status", value=0x00)
             self.service.add_path(base + "/Settings/CustomName", value=name)
-            self.service.add_path(base + "/Settings/Group", value=RELAY_GROUP)
+            self.service.add_path(base + "/Settings/Group", config["group"])
             self.service.add_path(base + "/Settings/Type", value=1)
             self.service.add_path(base + "/Settings/ValidTypes", value=2)
             self.service.add_path(base + "/Settings/ShowUIControl", value=6)
