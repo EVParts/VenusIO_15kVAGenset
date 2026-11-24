@@ -4,8 +4,10 @@ import os
 import sys
 import signal
 import json
+import threading
 
 from functools import partial
+from pymodbus.client.sync import ModbusTcpClient
 
 # --------------------------------------------------
 # CONFIGURATION
@@ -16,41 +18,50 @@ DEVICE_INSTANCE = 0
 PRODUCT_NAME = "15kVA Genset IO Controller"
 VERSION = "1.0"
 
+# Dingtian Modbus TCP settings
+MODBUS_HOST = "192.168.1.100"
+MODBUS_PORT = 502
+MODBUS_UNIT_ID = 1
+MODBUS_POLL_INTERVAL = 0.5
+MODBUS_SOCKET_TIMEOUT = 1.0
+MODBUS_INPUT_REGISTER_START = 0x0016
+MODBUS_RELAY_REGISTER_START = 0x0036
+
 INPUT_GROUP = "Genset Inputs"
 RELAY_GROUP = "Genset Relays"
 
 INPUTS = {
-    "off_button": {
+    "generator": {
         "name": "Off Button",
         "initial": 0,
         "labels": ["Released", "Pressed"],
     },
-    "on_button": {
+    "cabin_lights": {
         "name": "On Button",
         "initial": 0,
         "labels": ["Released", "Pressed"],
     },
-    "charge_button": {
+    "exterior_lights": {
         "name": "ChargeOnly Button",
         "initial": 0,
         "labels": ["Released", "Pressed"],
     },
-    "off_button_led_state": {
+    "water_pump": {
         "name": "Off LED State",
         "initial": 0,
         "labels": ["Off", "On"],
     },
-    "on_button_led_state": {
+    "shore_power": {
         "name": "On LED State",
         "initial": 0,
         "labels": ["Off", "On"],
     },
-    "charge_button_led_state": {
+    "charger": {
         "name": "ChargeOnly LED State",
         "initial": 0,
         "labels": ["Off", "On"],
     },
-    "bms_wake_state": {
+    "bilge_alarm": {
         "name": "BMS Wake State",
         "initial": 0,
         "labels": ["Inactive", "Active"],
@@ -121,6 +132,14 @@ class GensetIOController:
 
         self.service = None
         self.mainloop = GLib.MainLoop()
+        self.stop_event = threading.Event()
+        self.modbus_thread = None
+        self.modbus_client = None
+        self.relay_state_lock = threading.Lock()
+        self.desired_relay_states = {
+            relay_id: int(config["initial"])
+            for relay_id, config in RELAYS.items()
+        }
 
         self.validate_config()
         self.create_dbus_service()
@@ -164,42 +183,144 @@ class GensetIOController:
                         )
 
     # --------------------------------------------------
-    # HARDWARE INTERFACE
+    # MODBUS INTERFACE
     # --------------------------------------------------
 
-    def set_relay(self, relay_id, state):
-        """
-        Called when a relay is commanded from D-Bus.
+    def modbus_worker(self):
+        """Poll the Dingtian module and apply requested relay states."""
 
-        Replace this stub with the hardware control implementation.
-        Return True to accept the command or False to reject it.
-        """
+        self.modbus_client = ModbusTcpClient(
+            MODBUS_HOST,
+            port=MODBUS_PORT,
+            timeout=MODBUS_SOCKET_TIMEOUT
+        )
+        last_sent_states = {}
 
-        print(f"Relay control not yet implemented: {relay_id} = {state}")
+        print(
+            f"Modbus worker started: {MODBUS_HOST}:{MODBUS_PORT}, "
+            f"unit ID {MODBUS_UNIT_ID}"
+        )
 
-        # Accept commands while testing without hardware.
-        return True
+        try:
+            while not self.stop_event.is_set():
+                try:
+                    if not self.modbus_client.connect():
+                        print(
+                            f"Modbus connection failed: "
+                            f"{MODBUS_HOST}:{MODBUS_PORT}"
+                        )
+                        self.stop_event.wait(MODBUS_POLL_INTERVAL)
+                        continue
 
-    def set_input_value(self, input_id, value):
-        """
-        Update a digital input from the hardware interface.
+                    with self.relay_state_lock:
+                        requested_states = dict(self.desired_relay_states)
 
-        Call this whenever an input state changes.
-        """
+                    # Configuration order maps directly to Dingtian channels.
+                    for channel, (relay_id, state) in enumerate(
+                        requested_states.items()
+                    ):
+                        if last_sent_states.get(relay_id) == state:
+                            continue
 
-        if input_id not in INPUTS:
-            print(f"Unknown input: {input_id}")
+                        register = MODBUS_RELAY_REGISTER_START + channel
+                        response = self.modbus_client.write_register(
+                            register, state, unit=MODBUS_UNIT_ID
+                        )
+                        if response.isError():
+                            raise RuntimeError(
+                                f"Modbus write failed for {relay_id} "
+                                f"(register 0x{register:04X}): {response}"
+                            )
+
+                        last_sent_states[relay_id] = state
+                        print(
+                            f"Modbus relay command: {relay_id} = {state} "
+                            f"(register 0x{register:04X})"
+                        )
+
+                    input_response = self.modbus_client.read_holding_registers(
+                        MODBUS_INPUT_REGISTER_START,
+                        count=len(INPUTS),
+                        unit=MODBUS_UNIT_ID
+                    )
+                    if input_response.isError():
+                        raise RuntimeError(
+                            f"Modbus input read failed: {input_response}"
+                        )
+                    if len(input_response.registers) != len(INPUTS):
+                        raise RuntimeError(
+                            "Unexpected number of input registers returned"
+                        )
+
+                    input_states = {
+                        input_id: int(value != 0)
+                        for input_id, value in zip(
+                            INPUTS.keys(), input_response.registers
+                        )
+                    }
+
+                    relay_response = self.modbus_client.read_holding_registers(
+                        MODBUS_RELAY_REGISTER_START,
+                        count=len(RELAYS),
+                        unit=MODBUS_UNIT_ID
+                    )
+                    if relay_response.isError():
+                        raise RuntimeError(
+                            f"Modbus relay read failed: {relay_response}"
+                        )
+                    if len(relay_response.registers) != len(RELAYS):
+                        raise RuntimeError(
+                            "Unexpected number of relay registers returned"
+                        )
+
+                    relay_feedback = {
+                        relay_id: int(value != 0)
+                        for relay_id, value in zip(
+                            RELAYS.keys(), relay_response.registers
+                        )
+                    }
+
+                    # All D-Bus updates are executed by the GLib main loop.
+                    GLib.idle_add(
+                        self.apply_hardware_states,
+                        input_states,
+                        relay_feedback
+                    )
+
+                except Exception as ex:
+                    print(f"Modbus communication error: {ex}")
+                    last_sent_states.clear()
+                    self.modbus_client.close()
+
+                self.stop_event.wait(MODBUS_POLL_INTERVAL)
+
+        finally:
+            self.modbus_client.close()
+            print("Modbus worker stopped")
+
+    def apply_hardware_states(self, input_states, relay_feedback):
+        """Apply hardware values on the GLib main-loop thread."""
+
+        if self.service is None:
             return False
 
-        if value not in (0, 1):
-            print(f"Invalid input value: {input_id} = {value}")
-            return False
+        for input_id, value in input_states.items():
+            self.service[f"/GenericInput/{input_id}/Value"] = value
 
-        path = f"/GenericInput/{input_id}/Value"
-        self.service[path] = int(value)
+        for relay_id, value in relay_feedback.items():
+            self.service[f"/SwitchableOutput/{relay_id}/Status"] = (
+                0x09 if value else 0x00
+            )
 
-        print(f"Input {input_id} = {value}")
-        return True
+        return False
+
+    def start_modbus_thread(self):
+        self.modbus_thread = threading.Thread(
+            target=self.modbus_worker,
+            name="DingtianModbus",
+            daemon=True
+        )
+        self.modbus_thread.start()
 
     # --------------------------------------------------
     # D-BUS CALLBACKS
@@ -226,12 +347,9 @@ class GensetIOController:
             f"{'ON' if state else 'OFF'}"
         )
 
-        if not self.set_relay(relay_id, state):
-            print(f"Relay command rejected: {relay_id}")
-            return False
-
-        status_path = f"/SwitchableOutput/{relay_id}/Status"
-        self.service[status_path] = 0x09 if state else 0x00
+        # The Modbus worker sends this requested state to the Dingtian.
+        with self.relay_state_lock:
+            self.desired_relay_states[relay_id] = state
 
         return True
 
@@ -355,6 +473,7 @@ class GensetIOController:
 
     def shutdown(self, signum=None, frame=None):
         print("Shutdown requested")
+        self.stop_event.set()
         self.mainloop.quit()
 
     def run(self):
@@ -367,10 +486,16 @@ class GensetIOController:
             f"{len(RELAYS)} relays"
         )
 
+        self.start_modbus_thread()
+
         try:
             self.mainloop.run()
 
         finally:
+            self.stop_event.set()
+            if self.modbus_thread is not None:
+                self.modbus_thread.join(timeout=3.0)
+
             print("Unregistering D-Bus service")
             if self.service is not None:
                 self.service.__del__()
