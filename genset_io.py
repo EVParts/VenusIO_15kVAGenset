@@ -6,6 +6,8 @@ import sys
 import signal
 import json
 import threading
+from itertools import chain
+
 import dbus
 
 from functools import partial
@@ -76,7 +78,10 @@ INPUTS = {
         "group": "BMS",
         "initial": 0,
         "labels": ["Inactive", "Active"],
-    },
+    }
+}
+
+DIAGNOSTICS = {
     "cpu_load_avg_1": {
         "name": "CPU Load Average 1m",
         "group": "Diagnostics",
@@ -186,6 +191,7 @@ class GensetIOController:
         for category, devices in (
             ("input", INPUTS),
             ("relay", RELAYS),
+            ("diagnostics", DIAGNOSTICS),
         ):
             for device_id, config in devices.items():
 
@@ -442,7 +448,7 @@ class GensetIOController:
 
         # Inputs
 
-        for input_id, config in INPUTS.items():
+        for input_id, config in chain(INPUTS.items(), DIAGNOSTICS.items()):
 
             base = f"/GenericInput/{input_id}"
             name = config["name"]
