@@ -3,6 +3,7 @@
 import os
 import sys
 import signal
+import dbus
 import json
 
 from functools import partial
@@ -26,37 +27,37 @@ RELAY_GROUP = "Genset Relays"
 # initial  = Initial input state (0 or 1)
 
 INPUTS = {
-    "generator": {
+    "off_button": {
         "name": "Off Button",
         "initial": 0,
         "labels": ["Released", "Pressed"],
     },
-    "cabin_lights": {
+    "on_button": {
         "name": "On Button",
         "initial": 0,
         "labels": ["Released", "Pressed"],
     },
-    "exterior_lights": {
+    "charge_button": {
         "name": "ChargeOnly Button",
         "initial": 0,
         "labels": ["Released", "Pressed"],
     },
-    "water_pump": {
+    "off_button_led_state": {
         "name": "Off LED State",
         "initial": 0,
         "labels": ["Off", "On"],
     },
-    "shore_power": {
+    "on_button_led_state": {
         "name": "On LED State",
         "initial": 0,
         "labels": ["Off", "On"],
     },
-    "charger": {
+    "charge_button_led_state": {
         "name": "ChargeOnly LED State",
         "initial": 0,
         "labels": ["Off", "On"],
     },
-    "bilge_alarm": {
+    "bms_wake_state": {
         "name": "BMS Wake State",
         "initial": 0,
         "labels": ["Inactive", "Active"],
@@ -316,7 +317,11 @@ def create_dbus_service():
         # The D-Bus value is a JSON-encoded list of strings.
         service.add_path(
             base + "/Settings/Labels",
-            value=json.dumps(config["labels"])
+            value=dbus.Array(
+                [dbus.String(label) for label in config["labels"]],
+                signature="s",
+                variant_level=1
+            )
         )
 
         # Type 0 = discrete indicator
