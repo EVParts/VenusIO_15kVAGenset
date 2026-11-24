@@ -201,10 +201,13 @@ class GensetIOController:
                     raise ValueError(f"Invalid initial state for {device_id}")
                 if category == "input":
                     labels = config.get("labels")
-                    if not isinstance(labels, list) or len(labels) != 2:
-                        raise ValueError(f"Input {device_id} must have exactly two labels")
-                    if not all(isinstance(label, str) for label in labels):
-                        raise ValueError(f"Input {device_id} labels must be strings")
+
+                    if labels is not None:
+                        if not isinstance(labels, list):
+                            raise ValueError(f"Input {device_id} labels must be a list")
+                        if not all(isinstance(label, str) for label in labels):
+                            raise ValueError(f"Input {device_id} labels must contain only strings")
+
 
                 group = config.get("group", "")
 
