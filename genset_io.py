@@ -97,6 +97,11 @@ DIAGNOSTICS = {
         "group": "Diagnostics",
         "initial": 0
     },
+    "memory_used_percent": {
+        "name": "RAM Used (%)",
+        "group": "Diagnostics",
+        "initial": 0
+    }
 }
 
 RELAYS = {
@@ -390,6 +395,8 @@ class GensetIOController:
         self.service[f'/GenericInput/cpu_load_avg_1/Value'] = round(psu_load_avg[0], 2)
         self.service[f'/GenericInput/cpu_load_avg_5/Value'] = round(psu_load_avg[1], 2)
         self.service[f'/GenericInput/cpu_load_avg_15/Value'] = round(psu_load_avg[2], 2)
+        memory = psutil.virtual_memory()
+        self.service[f'/GenericInput/memory_used_percent/Value'] = round(memory.percent, 1)
 
     def set_connection_state(self, connected):
         """Update the D-Bus connection state on the GLib main-loop thread."""
