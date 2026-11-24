@@ -370,8 +370,8 @@ class GensetIOController:
 
         psu_load_avg = psutil.getloadavg()
         self.service[f'/GenericInput/cpu_load_avg_1/Value'] = psu_load_avg[0]
-        self.service[f'/GenericInput/cpu_load_avg_5/Value'] = psu_load_avg[0]
-        self.service[f'/GenericInput/cpu_load_avg_15/Value'] = psu_load_avg[0]
+        self.service[f'/GenericInput/cpu_load_avg_5/Value'] = psu_load_avg[1]
+        self.service[f'/GenericInput/cpu_load_avg_15/Value'] = psu_load_avg[2]
 
         for relay_id, value in relay_feedback.items():
             self.service[f"/SwitchableOutput/{relay_id}/Status"] = 0x09 if value else 0x00
