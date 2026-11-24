@@ -3,7 +3,6 @@
 import os
 import sys
 import signal
-import dbus
 import json
 
 from functools import partial
@@ -19,12 +18,6 @@ VERSION = "1.0"
 
 INPUT_GROUP = "Genset Inputs"
 RELAY_GROUP = "Genset Relays"
-
-# Digital inputs
-#
-# id       = D-Bus channel identifier
-# name     = Display name
-# initial  = Initial input state (0 or 1)
 
 INPUTS = {
     "off_button": {
@@ -64,13 +57,6 @@ INPUTS = {
     }
 }
 
-
-# Relay outputs
-#
-# id       = D-Bus channel identifier
-# name     = Display name
-# initial  = Initial relay state (0 or 1)
-
 RELAYS = {
     "off_button_led": {
         "name": "Off Button LED",
@@ -108,14 +94,7 @@ RELAYS = {
 
 
 # --------------------------------------------------
-# OUTPUT
-# --------------------------------------------------
-
-# Use print() so output can be collected by multilog.
-
-
-# --------------------------------------------------
-# VICRON PYTHON LIBRARY
+# VICTRON PYTHON LIBRARY
 # --------------------------------------------------
 
 for path in [
@@ -132,322 +111,290 @@ from vedbus import VeDbusService
 
 
 # --------------------------------------------------
-# HARDWARE INTERFACE STUBS
+# GENSET IO CONTROLLER
 # --------------------------------------------------
 
-def set_relay(relay_id, state):
-    """
-    Called when a relay is commanded from D-Bus.
+class GensetIOController:
 
-    Replace this function with the actual hardware
-    control implementation.
+    def __init__(self):
+        DBusGMainLoop(set_as_default=True)
 
-    Return True to accept the command.
-    Return False to reject the command.
-    """
+        self.service = None
+        self.mainloop = GLib.MainLoop()
 
-    print(f"Relay control not yet implemented: {relay_id} = {state}")
-
-    # Accept command for virtual testing.
-    return True
-
-
-def set_input_value(input_id, value):
-    """
-    Update a digital input from the hardware interface.
-
-    Call this whenever an input state changes.
-    """
-
-    if input_id not in INPUTS:
-        print(f"Unknown input: {input_id}")
-        return False
-
-    if value not in (0, 1):
-        print(f"Invalid input value: {input_id} = {value}")
-        return False
-
-    path = f"/GenericInput/{input_id}/Value"
-
-    dbus[path] = int(value)
-
-    print(f"Input {input_id} = {value}")
-
-    return True
-
-
-# --------------------------------------------------
-# RELAY CALLBACK
-# --------------------------------------------------
-
-def relay_changed(relay_id, path, new_value):
-    """
-    Called when an external application writes
-    to /SwitchableOutput/<id>/State.
-    """
-
-    try:
-        state = int(new_value)
-    except (ValueError, TypeError):
-        print(f"Invalid relay command: {relay_id} = {new_value}")
-        return False
-
-    if state not in (0, 1):
-        print(f"Invalid relay state: {relay_id} = {state}")
-        return False
-
-    print(
-        f"Relay command received: {relay_id} = "
-        f"{'ON' if state else 'OFF'}"
-    )
-
-    # Pass command to hardware interface
-    if not set_relay(relay_id, state):
-        print(f"Relay command rejected: {relay_id}")
-        return False
-
-    # Update reported status
-    status_path = f"/SwitchableOutput/{relay_id}/Status"
-
-    dbus[status_path] = 0x09 if state else 0x00
-
-    return True
-
-
-# --------------------------------------------------
-# CONFIGURATION VALIDATION
-# --------------------------------------------------
-
-def validate_config():
-
-    for category, devices in (
-        ("input", INPUTS),
-        ("relay", RELAYS),
-    ):
-        for device_id, config in devices.items():
-
-            if not device_id.replace("_", "").isalnum():
-                raise ValueError(f"Invalid {category} ID: {device_id}")
-
-            name = config.get("name", "")
-
-            if not isinstance(name, str) or not name.strip():
-                raise ValueError(f"Missing name for {device_id}")
-
-            if len(name.encode("utf-8")) > 32:
-                raise ValueError(f"Name too long for {device_id}")
-
-            if config.get("initial") not in (0, 1):
-                raise ValueError(f"Invalid initial state for {device_id}")
-
-
-# --------------------------------------------------
-# D-BUS INITIALISATION
-# --------------------------------------------------
-
-def create_dbus_service():
-
-    service = VeDbusService(
-        SERVICE_NAME,
-        register=False
-    )
-
-    # Device information
-    service.add_path("/DeviceInstance", value=DEVICE_INSTANCE)
-    service.add_path("/ProductName", value=PRODUCT_NAME)
-    service.add_path("/Connected", value=1)
-
-    service.add_path(
-        "/Mgmt/Connection",
-        value="Local"
-    )
-
-    service.add_path(
-        "/Mgmt/ProcessName",
-        value=__file__
-    )
-
-    service.add_path(
-        "/Mgmt/ProcessVersion",
-        value=VERSION
-    )
+        self.validate_config()
+        self.create_dbus_service()
 
     # --------------------------------------------------
-    # INPUTS
+    # CONFIGURATION
     # --------------------------------------------------
 
-    for input_id, config in INPUTS.items():
+    @staticmethod
+    def validate_config():
 
-        base = f"/GenericInput/{input_id}"
+        for category, devices in (
+            ("input", INPUTS),
+            ("relay", RELAYS),
+        ):
+            for device_id, config in devices.items():
 
-        name = config["name"]
-        initial = config["initial"]
+                if not device_id.replace("_", "").isalnum():
+                    raise ValueError(f"Invalid {category} ID: {device_id}")
 
-        service.add_path(
-            base + "/Name",
-            value=name
+                name = config.get("name", "")
+
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError(f"Missing name for {device_id}")
+
+                if len(name.encode("utf-8")) > 32:
+                    raise ValueError(f"Name too long for {device_id}")
+
+                if config.get("initial") not in (0, 1):
+                    raise ValueError(f"Invalid initial state for {device_id}")
+
+                if category == "input":
+                    labels = config.get("labels")
+                    if not isinstance(labels, list) or len(labels) != 2:
+                        raise ValueError(
+                            f"Input {device_id} must have exactly two labels"
+                        )
+                    if not all(isinstance(label, str) for label in labels):
+                        raise ValueError(
+                            f"Input {device_id} labels must be strings"
+                        )
+
+    # --------------------------------------------------
+    # HARDWARE INTERFACE
+    # --------------------------------------------------
+
+    def set_relay(self, relay_id, state):
+        """
+        Called when a relay is commanded from D-Bus.
+
+        Replace this stub with the hardware control implementation.
+        Return True to accept the command or False to reject it.
+        """
+
+        print(f"Relay control not yet implemented: {relay_id} = {state}")
+
+        # Accept commands while testing without hardware.
+        return True
+
+    def set_input_value(self, input_id, value):
+        """
+        Update a digital input from the hardware interface.
+
+        Call this whenever an input state changes.
+        """
+
+        if input_id not in INPUTS:
+            print(f"Unknown input: {input_id}")
+            return False
+
+        if value not in (0, 1):
+            print(f"Invalid input value: {input_id} = {value}")
+            return False
+
+        path = f"/GenericInput/{input_id}/Value"
+        self.service[path] = int(value)
+
+        print(f"Input {input_id} = {value}")
+        return True
+
+    # --------------------------------------------------
+    # D-BUS CALLBACKS
+    # --------------------------------------------------
+
+    def relay_changed(self, relay_id, path, new_value):
+        """
+        Called when an external application writes to
+        /SwitchableOutput/<id>/State.
+        """
+
+        try:
+            state = int(new_value)
+        except (ValueError, TypeError):
+            print(f"Invalid relay command: {relay_id} = {new_value}")
+            return False
+
+        if state not in (0, 1):
+            print(f"Invalid relay state: {relay_id} = {state}")
+            return False
+
+        print(
+            f"Relay command received: {relay_id} = "
+            f"{'ON' if state else 'OFF'}"
         )
 
-        service.add_path(
-            base + "/Value",
-            value=initial
+        if not self.set_relay(relay_id, state):
+            print(f"Relay command rejected: {relay_id}")
+            return False
+
+        status_path = f"/SwitchableOutput/{relay_id}/Status"
+        self.service[status_path] = 0x09 if state else 0x00
+
+        return True
+
+    # --------------------------------------------------
+    # D-BUS INITIALISATION
+    # --------------------------------------------------
+
+    def create_dbus_service(self):
+
+        self.service = VeDbusService(
+            SERVICE_NAME,
+            register=False
         )
 
-        service.add_path(
-            base + "/Status",
-            value=0
-        )
+        # Device information
+        self.service.add_path("/DeviceInstance", value=DEVICE_INSTANCE)
+        self.service.add_path("/ProductName", value=PRODUCT_NAME)
+        self.service.add_path("/Connected", value=1)
+        self.service.add_path("/Mgmt/Connection", value="Local")
+        self.service.add_path("/Mgmt/ProcessName", value=__file__)
+        self.service.add_path("/Mgmt/ProcessVersion", value=VERSION)
 
-        service.add_path(
-            base + "/Settings/CustomName",
-            value=name
-        )
+        # Inputs
+        for input_id, config in INPUTS.items():
 
-        service.add_path(
-            base + "/Settings/Group",
-            value=INPUT_GROUP
-        )
+            base = f"/GenericInput/{input_id}"
+            name = config["name"]
 
-        service.add_path(
-            base + "/Settings/Type",
-            value=0
-        )
-
-        # Map each integer input value to its displayed text label.
-        # The D-Bus value is a JSON-encoded list of strings.
-        service.add_path(
-            base + "/Settings/Labels",
-            value=dbus.Array(
-                [dbus.String(label) for label in config["labels"]],
-                signature="s",
-                variant_level=1
+            self.service.add_path(base + "/Name", value=name)
+            self.service.add_path(
+                base + "/Value",
+                value=config["initial"]
             )
-        )
-
-        # Type 0 = discrete indicator
-        service.add_path(
-            base + "/Settings/ValidTypes",
-            value=1
-        )
-
-        service.add_path(
-            base + "/Settings/ShowUIInput",
-            value=6
-        )
-
-        print(f"Registered input: {name}")
-
-    # --------------------------------------------------
-    # RELAYS
-    # --------------------------------------------------
-
-    for relay_id, config in RELAYS.items():
-
-        base = f"/SwitchableOutput/{relay_id}"
-
-        name = config["name"]
-        initial = config["initial"]
-
-        service.add_path(
-            base + "/Name",
-            value=name
-        )
-
-        service.add_path(
-            base + "/State",
-            value=initial,
-            writeable=True,
-            onchangecallback=partial(
-                relay_changed,
-                relay_id
+            self.service.add_path(base + "/Status", value=0)
+            self.service.add_path(
+                base + "/Settings/CustomName",
+                value=name
             )
+            self.service.add_path(
+                base + "/Settings/Group",
+                value=INPUT_GROUP
+            )
+            self.service.add_path(
+                base + "/Settings/Type",
+                value=0
+            )
+
+            # Preserve the existing JSON-encoded Labels representation.
+            self.service.add_path(
+                base + "/Settings/Labels",
+                value=json.dumps(config["labels"])
+            )
+
+            self.service.add_path(
+                base + "/Settings/ValidTypes",
+                value=1
+            )
+            self.service.add_path(
+                base + "/Settings/ShowUIInput",
+                value=6
+            )
+
+            print(f"Registered input: {name}")
+
+        # Relays
+        for relay_id, config in RELAYS.items():
+
+            base = f"/SwitchableOutput/{relay_id}"
+            name = config["name"]
+            initial = config["initial"]
+
+            self.service.add_path(base + "/Name", value=name)
+            self.service.add_path(
+                base + "/State",
+                value=initial,
+                writeable=True,
+                onchangecallback=partial(
+                    self.relay_changed,
+                    relay_id
+                )
+            )
+            self.service.add_path(
+                base + "/Status",
+                value=0x09 if initial else 0x00
+            )
+            self.service.add_path(
+                base + "/Settings/CustomName",
+                value=name
+            )
+            self.service.add_path(
+                base + "/Settings/Group",
+                value=RELAY_GROUP
+            )
+            self.service.add_path(
+                base + "/Settings/Type",
+                value=1
+            )
+            self.service.add_path(
+                base + "/Settings/ValidTypes",
+                value=2
+            )
+            self.service.add_path(
+                base + "/Settings/ShowUIControl",
+                value=6
+            )
+            self.service.add_path(
+                base + "/Auto",
+                value=0
+            )
+
+            print(f"Registered relay: {name}")
+
+        # Register after all paths have been created.
+        self.service.register()
+
+        print(f"D-Bus service registered: {SERVICE_NAME}")
+
+    # --------------------------------------------------
+    # APPLICATION
+    # --------------------------------------------------
+
+    def shutdown(self, signum=None, frame=None):
+        print("Shutdown requested")
+        self.mainloop.quit()
+
+    def run(self):
+
+        signal.signal(signal.SIGTERM, self.shutdown)
+        signal.signal(signal.SIGINT, self.shutdown)
+
+        print(
+            f"Genset IO running: {len(INPUTS)} inputs, "
+            f"{len(RELAYS)} relays"
         )
 
-        service.add_path(
-            base + "/Status",
-            value=0x09 if initial else 0x00
-        )
+        try:
+            self.mainloop.run()
 
-        service.add_path(
-            base + "/Settings/CustomName",
-            value=name
-        )
-
-        service.add_path(
-            base + "/Settings/Group",
-            value=RELAY_GROUP
-        )
-
-        # Type 1 = toggle
-        service.add_path(
-            base + "/Settings/Type",
-            value=1
-        )
-
-        # Bit 1 set = toggle supported
-        service.add_path(
-            base + "/Settings/ValidTypes",
-            value=2
-        )
-
-        # Local GUI and VRM Remote Console
-        service.add_path(
-            base + "/Settings/ShowUIControl",
-            value=6
-        )
-
-        # Manual operation
-        service.add_path(
-            base + "/Auto",
-            value=0
-        )
-
-        print(f"Registered relay: {name}")
-
-    # Register after all paths have been created
-    service.register()
-
-    print(f"D-Bus service registered: {SERVICE_NAME}")
-
-    return service
+        finally:
+            print("Unregistering D-Bus service")
+            if self.service is not None:
+                self.service.__del__()
+                self.service = None
+            print("Shutdown complete")
 
 
 # --------------------------------------------------
-# APPLICATION
+# ENTRY POINT
 # --------------------------------------------------
 
 def main():
 
-    global dbus
-
-    validate_config()
-
-    DBusGMainLoop(set_as_default=True)
-
-    dbus = create_dbus_service()
-
-    mainloop = GLib.MainLoop()
-
-    def shutdown(signum, frame):
-        print("Shutdown requested")
-        mainloop.quit()
-
-    signal.signal(signal.SIGTERM, shutdown)
-    signal.signal(signal.SIGINT, shutdown)
-
-    print(
-        f"Genset IO running: {len(INPUTS)} inputs, "
-        f"{len(RELAYS)} relays"
-    )
-
-    try:
-        mainloop.run()
-
-    finally:
-        print("Unregistering D-Bus service")
-        dbus.__del__()
-        print("Shutdown complete")
+    controller = GensetIOController()
+    controller.run()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as ex:
+        print("Exception raised")
+        print(ex)
+        print("Restart required, going down in 5s")
+        import time
+        time.sleep(5)
+        raise
