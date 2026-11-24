@@ -9,6 +9,8 @@ import threading
 import dbus
 
 from functools import partial
+
+import psutil
 from pymodbus.client.sync import ModbusTcpClient
 from pymodbus.transaction import ModbusRtuFramer
 
@@ -33,47 +35,62 @@ MODBUS_INPUT_REGISTER_START = 0x0016
 MODBUS_RELAY_REGISTER_START = 0x0036
 
 INPUTS = {
-    "generator": {
+    "off_button": {
         "name": "Off Button",
         "group": "Buttons",
         "initial": 0,
         "labels": ["Released", "Pressed"],
     },
-    "cabin_lights": {
+    "on_button": {
         "name": "On Button",
         "group": "Buttons",
         "initial": 0,
         "labels": ["Released", "Pressed"],
     },
-    "exterior_lights": {
+    "charge_button": {
         "name": "ChargeOnly Button",
         "group": "Buttons",
         "initial": 0,
         "labels": ["Released", "Pressed"],
     },
-    "water_pump": {
+    "off_button_led_state": {
         "name": "Off LED State",
         "group": "LEDs",
         "initial": 0,
         "labels": ["Off", "On"],
     },
-    "shore_power": {
+    "on_button_led_state": {
         "name": "On LED State",
         "group": "LEDs",
         "initial": 0,
         "labels": ["Off", "On"],
     },
-    "charger": {
+    "charge_button_led_state": {
         "name": "ChargeOnly LED State",
         "group": "LEDs",
         "initial": 0,
         "labels": ["Off", "On"],
     },
-    "bilge_alarm": {
+    "bms_wake_state": {
         "name": "BMS Wake State",
         "group": "BMS",
         "initial": 0,
         "labels": ["Inactive", "Active"],
+    },
+    "cpu_load_avg_1": {
+        "name": "CPU Load Average 1m",
+        "group": "Diagnostics",
+        "initial": 0
+    },
+    "cpu_load_avg_5": {
+        "name": "CPU Load Average 5m",
+        "group": "Diagnostics",
+        "initial": 0
+    },
+    "cpu_load_avg_15": {
+        "name": "CPU Load Average 15m",
+        "group": "Diagnostics",
+        "initial": 0
     },
 }
 
@@ -347,6 +364,12 @@ class GensetIOController:
             return False
         for input_id, value in input_states.items():
             self.service[f"/GenericInput/{input_id}/Value"] = value
+
+        psu_load_avg = psutil.get_load_avg()
+        self.service[f'GenericInput/cpu_load_avg_1'] = psu_load_avg[0]
+        self.service[f'GenericInput/cpu_load_avg_5'] = psu_load_avg[0]
+        self.service[f'GenericInput/cpu_load_avg_15'] = psu_load_avg[0]
+
         for relay_id, value in relay_feedback.items():
             self.service[f"/SwitchableOutput/{relay_id}/Status"] = 0x09 if value else 0x00
         return False
