@@ -4,7 +4,6 @@
 import os
 import sys
 import signal
-import logging
 
 from functools import partial
 
@@ -101,15 +100,10 @@ RELAYS = {
 
 
 # --------------------------------------------------
-# LOGGING
+# OUTPUT
 # --------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s: %(message)s"
-)
-
-log = logging.getLogger("vehicle_io")
+# Use print() so output can be collected by multilog.
 
 
 # --------------------------------------------------
@@ -144,11 +138,7 @@ def set_relay(relay_id, state):
     Return False to reject the command.
     """
 
-    log.warning(
-        "Relay control not yet implemented: %s = %d",
-        relay_id,
-        state
-    )
+    print(f"Relay control not yet implemented: {relay_id} = {state}")
 
     # Accept command for virtual testing.
     return True
@@ -162,18 +152,18 @@ def set_input_value(input_id, value):
     """
 
     if input_id not in INPUTS:
-        log.error("Unknown input: %s", input_id)
+        print(f"Unknown input: {input_id}")
         return False
 
     if value not in (0, 1):
-        log.error("Invalid input value: %s = %s", input_id, value)
+        print(f"Invalid input value: {input_id} = {value}")
         return False
 
     path = f"/GenericInput/{input_id}/Value"
 
     dbus[path] = int(value)
 
-    log.debug("Input %s = %d", input_id, value)
+    print(f"Input {input_id} = {value}")
 
     return True
 
@@ -191,22 +181,21 @@ def relay_changed(relay_id, path, new_value):
     try:
         state = int(new_value)
     except (ValueError, TypeError):
-        log.error("Invalid relay command: %s = %s", relay_id, new_value)
+        print(f"Invalid relay command: {relay_id} = {new_value}")
         return False
 
     if state not in (0, 1):
-        log.error("Invalid relay state: %s = %s", relay_id, state)
+        print(f"Invalid relay state: {relay_id} = {state}")
         return False
 
-    log.info(
-        "Relay command received: %s = %s",
-        relay_id,
-        "ON" if state else "OFF"
+    print(
+        f"Relay command received: {relay_id} = "
+        f"{'ON' if state else 'OFF'}"
     )
 
     # Pass command to hardware interface
     if not set_relay(relay_id, state):
-        log.error("Relay command rejected: %s", relay_id)
+        print(f"Relay command rejected: {relay_id}")
         return False
 
     # Update reported status
@@ -327,7 +316,7 @@ def create_dbus_service():
             value=6
         )
 
-        log.info("Registered input: %s", name)
+        print(f"Registered input: {name}")
 
     # --------------------------------------------------
     # RELAYS
@@ -394,12 +383,12 @@ def create_dbus_service():
             value=0
         )
 
-        log.info("Registered relay: %s", name)
+        print(f"Registered relay: {name}")
 
     # Register after all paths have been created
     service.register()
 
-    log.info("D-Bus service registered: %s", SERVICE_NAME)
+    print(f"D-Bus service registered: {SERVICE_NAME}")
 
     return service
 
@@ -421,25 +410,24 @@ def main():
     mainloop = GLib.MainLoop()
 
     def shutdown(signum, frame):
-        log.info("Shutdown requested")
+        print("Shutdown requested")
         mainloop.quit()
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-    log.info(
-        "Vehicle IO running: %d inputs, %d relays",
-        len(INPUTS),
-        len(RELAYS)
+    print(
+        f"{PRODUCT_NAME} IO running: {len(INPUTS)} inputs, "
+        f"{len(RELAYS)} relays"
     )
 
     try:
         mainloop.run()
 
     finally:
-        log.info("Unregistering D-Bus service")
+        print("Unregistering D-Bus service")
         dbus.__del__()
-        log.info("Shutdown complete")
+        print("Shutdown complete")
 
 
 if __name__ == "__main__":
