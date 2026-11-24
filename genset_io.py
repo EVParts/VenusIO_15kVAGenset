@@ -391,12 +391,18 @@ class GensetIOController:
         return False
 
     def populate_diagnostics(self):
+        print("Adding Diagnostic data to dbus")
         psu_load_avg = psutil.getloadavg()
-        self.service[f'/GenericInput/cpu_load_avg_1/Value'] = round(psu_load_avg[0], 2)
-        self.service[f'/GenericInput/cpu_load_avg_5/Value'] = round(psu_load_avg[1], 2)
-        self.service[f'/GenericInput/cpu_load_avg_15/Value'] = round(psu_load_avg[2], 2)
+        cpu_load_avg_1 = round(psu_load_avg[0], 2)
+        cpu_load_avg_5 = round(psu_load_avg[1], 2)
+        cpu_load_avg_15 = round(psu_load_avg[2], 2)
         memory = psutil.virtual_memory()
-        self.service[f'/GenericInput/memory_used_percent/Value'] = round(memory.percent, 1)
+        memory_used_percent = round(memory.percent, 1)
+        print(f"memory used (%) : {memory_used_percent:.2f}, cpu load avg 1m/5m/15m : {cpu_load_avg_1}/{cpu_load_avg_5}/{cpu_load_avg_15}")
+        self.service[f'/GenericInput/cpu_load_avg_1/Value'] = cpu_load_avg_1
+        self.service[f'/GenericInput/cpu_load_avg_5/Value'] = cpu_load_avg_5
+        self.service[f'/GenericInput/cpu_load_avg_15/Value'] = cpu_load_avg_15
+        self.service[f'/GenericInput/memory_used_percent/Value'] = memory_used_percent
 
     def set_connection_state(self, connected):
         """Update the D-Bus connection state on the GLib main-loop thread."""
