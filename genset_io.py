@@ -451,7 +451,7 @@ class GensetIOController:
             self.service.add_path(
                 base + "/Settings/Labels",
                 value=dbus.Array(
-                    [dbus.String(label) for label in config["labels"]],
+                    [dbus.String(label) for label in config.get("labels", [])],
                     signature="s",
                     variant_level=1
                 )
