@@ -1,0 +1,4 @@
+#!/bin/sh
+echo "*** starting VenusIO_15kVAGenset ***"
+exec 2>&1
+exec /data/VenusIO_15kVAGenset/genset_io.py
