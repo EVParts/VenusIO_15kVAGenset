@@ -238,8 +238,11 @@ class GensetIOController:
             f"unit ID {MODBUS_UNIT_ID}"
         )
 
+        diagnostic_counter = 0
+
         try:
             while not self.stop_event.is_set():
+                diagnostic_counter += 1
                 try:
                     if not connected:
                         if not self.modbus_client.connect():
@@ -344,6 +347,10 @@ class GensetIOController:
                         relay_feedback
                     )
 
+                    if diagnostic_counter >= 10:
+                        self.populate_diagnostics()
+                        diagnostic_counter = 0
+
                 except Exception as ex:
                     if connected or not connection_error_reported:
                         print(f"Modbus communication error: {ex}")
@@ -368,14 +375,15 @@ class GensetIOController:
         for input_id, value in input_states.items():
             self.service[f"/GenericInput/{input_id}/Value"] = value
 
-        psu_load_avg = psutil.getloadavg()
-        self.service[f'/GenericInput/cpu_load_avg_1/Value'] = psu_load_avg[0]
-        self.service[f'/GenericInput/cpu_load_avg_5/Value'] = psu_load_avg[1]
-        self.service[f'/GenericInput/cpu_load_avg_15/Value'] = psu_load_avg[2]
-
         for relay_id, value in relay_feedback.items():
             self.service[f"/SwitchableOutput/{relay_id}/Status"] = 0x09 if value else 0x00
         return False
+
+    def populate_diagnostics(self):
+        psu_load_avg = psutil.getloadavg()
+        self.service[f'/GenericInput/cpu_load_avg_1/Value'] = round(psu_load_avg[0], 2)
+        self.service[f'/GenericInput/cpu_load_avg_5/Value'] = round(psu_load_avg[1], 2)
+        self.service[f'/GenericInput/cpu_load_avg_15/Value'] = round(psu_load_avg[2], 2)
 
     def set_connection_state(self, connected):
         """Update the D-Bus connection state on the GLib main-loop thread."""
