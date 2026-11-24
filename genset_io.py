@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+
 import os
 import sys
 import signal
@@ -13,12 +14,14 @@ from pymodbus.client.sync import ModbusTcpClient
 # CONFIGURATION
 # --------------------------------------------------
 
+
 SERVICE_NAME = "com.victronenergy.switch.genset"
 DEVICE_INSTANCE = 0
 PRODUCT_NAME = "15kVA Genset IO Controller"
 VERSION = "1.0"
 
 # Dingtian Modbus TCP settings
+
 MODBUS_HOST = "192.168.1.100"
 MODBUS_PORT = 502
 MODBUS_UNIT_ID = 1
@@ -65,7 +68,7 @@ INPUTS = {
         "name": "BMS Wake State",
         "initial": 0,
         "labels": ["Inactive", "Active"],
-    }
+    },
 }
 
 RELAYS = {
@@ -108,6 +111,7 @@ RELAYS = {
 # VICTRON PYTHON LIBRARY
 # --------------------------------------------------
 
+
 for path in [
     "/opt/victronenergy/velib_python",
     "/opt/victronenergy/dbus-systemcalc-py/ext/velib_python",
@@ -115,7 +119,6 @@ for path in [
     if os.path.isdir(path):
         sys.path.insert(1, path)
         break
-
 from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
 from vedbus import VeDbusService
@@ -124,6 +127,7 @@ from vedbus import VeDbusService
 # --------------------------------------------------
 # GENSET IO CONTROLLER
 # --------------------------------------------------
+
 
 class GensetIOController:
 
@@ -136,10 +140,7 @@ class GensetIOController:
         self.modbus_thread = None
         self.modbus_client = None
         self.relay_state_lock = threading.Lock()
-        self.desired_relay_states = {
-            relay_id: int(config["initial"])
-            for relay_id, config in RELAYS.items()
-        }
+        self.desired_relay_states = {relay_id: int(config["initial"]) for relay_id, config in RELAYS.items()}
 
         self.validate_config()
         self.create_dbus_service()
@@ -159,28 +160,20 @@ class GensetIOController:
 
                 if not device_id.replace("_", "").isalnum():
                     raise ValueError(f"Invalid {category} ID: {device_id}")
-
                 name = config.get("name", "")
 
                 if not isinstance(name, str) or not name.strip():
                     raise ValueError(f"Missing name for {device_id}")
-
                 if len(name.encode("utf-8")) > 32:
                     raise ValueError(f"Name too long for {device_id}")
-
                 if config.get("initial") not in (0, 1):
                     raise ValueError(f"Invalid initial state for {device_id}")
-
                 if category == "input":
                     labels = config.get("labels")
                     if not isinstance(labels, list) or len(labels) != 2:
-                        raise ValueError(
-                            f"Input {device_id} must have exactly two labels"
-                        )
+                        raise ValueError(f"Input {device_id} must have exactly two labels")
                     if not all(isinstance(label, str) for label in labels):
-                        raise ValueError(
-                            f"Input {device_id} labels must be strings"
-                        )
+                        raise ValueError(f"Input {device_id} labels must be strings")
 
     # --------------------------------------------------
     # MODBUS INTERFACE
@@ -189,111 +182,63 @@ class GensetIOController:
     def modbus_worker(self):
         """Poll the Dingtian module and apply requested relay states."""
 
-        self.modbus_client = ModbusTcpClient(
-            MODBUS_HOST,
-            port=MODBUS_PORT,
-            timeout=MODBUS_SOCKET_TIMEOUT
-        )
+        self.modbus_client = ModbusTcpClient(MODBUS_HOST, port=MODBUS_PORT, timeout=MODBUS_SOCKET_TIMEOUT)
         last_sent_states = {}
 
-        print(
-            f"Modbus worker started: {MODBUS_HOST}:{MODBUS_PORT}, "
-            f"unit ID {MODBUS_UNIT_ID}"
-        )
+        print(f"Modbus worker started: {MODBUS_HOST}:{MODBUS_PORT}, " f"unit ID {MODBUS_UNIT_ID}")
 
         try:
             while not self.stop_event.is_set():
                 try:
                     if not self.modbus_client.connect():
-                        print(
-                            f"Modbus connection failed: "
-                            f"{MODBUS_HOST}:{MODBUS_PORT}"
-                        )
+                        print(f"Modbus connection failed: " f"{MODBUS_HOST}:{MODBUS_PORT}")
                         self.stop_event.wait(MODBUS_POLL_INTERVAL)
                         continue
-
                     with self.relay_state_lock:
                         requested_states = dict(self.desired_relay_states)
-
                     # Configuration order maps directly to Dingtian channels.
-                    for channel, (relay_id, state) in enumerate(
-                        requested_states.items()
-                    ):
+
+                    for channel, (relay_id, state) in enumerate(requested_states.items()):
                         if last_sent_states.get(relay_id) == state:
                             continue
-
                         register = MODBUS_RELAY_REGISTER_START + channel
-                        response = self.modbus_client.write_register(
-                            register, state, unit=MODBUS_UNIT_ID
-                        )
+                        response = self.modbus_client.write_register(register, state, unit=MODBUS_UNIT_ID)
                         if response.isError():
                             raise RuntimeError(
-                                f"Modbus write failed for {relay_id} "
-                                f"(register 0x{register:04X}): {response}"
+                                f"Modbus write failed for {relay_id} " f"(register 0x{register:04X}): {response}"
                             )
-
                         last_sent_states[relay_id] = state
-                        print(
-                            f"Modbus relay command: {relay_id} = {state} "
-                            f"(register 0x{register:04X})"
-                        )
-
+                        print(f"Modbus relay command: {relay_id} = {state} " f"(register 0x{register:04X})")
                     input_response = self.modbus_client.read_holding_registers(
-                        MODBUS_INPUT_REGISTER_START,
-                        count=len(INPUTS),
-                        unit=MODBUS_UNIT_ID
+                        MODBUS_INPUT_REGISTER_START, count=len(INPUTS), unit=MODBUS_UNIT_ID
                     )
                     if input_response.isError():
-                        raise RuntimeError(
-                            f"Modbus input read failed: {input_response}"
-                        )
+                        raise RuntimeError(f"Modbus input read failed: {input_response}")
                     if len(input_response.registers) != len(INPUTS):
-                        raise RuntimeError(
-                            "Unexpected number of input registers returned"
-                        )
-
+                        raise RuntimeError("Unexpected number of input registers returned")
                     input_states = {
-                        input_id: int(value != 0)
-                        for input_id, value in zip(
-                            INPUTS.keys(), input_response.registers
-                        )
+                        input_id: int(value != 0) for input_id, value in zip(INPUTS.keys(), input_response.registers)
                     }
 
                     relay_response = self.modbus_client.read_holding_registers(
-                        MODBUS_RELAY_REGISTER_START,
-                        count=len(RELAYS),
-                        unit=MODBUS_UNIT_ID
+                        MODBUS_RELAY_REGISTER_START, count=len(RELAYS), unit=MODBUS_UNIT_ID
                     )
                     if relay_response.isError():
-                        raise RuntimeError(
-                            f"Modbus relay read failed: {relay_response}"
-                        )
+                        raise RuntimeError(f"Modbus relay read failed: {relay_response}")
                     if len(relay_response.registers) != len(RELAYS):
-                        raise RuntimeError(
-                            "Unexpected number of relay registers returned"
-                        )
-
+                        raise RuntimeError("Unexpected number of relay registers returned")
                     relay_feedback = {
-                        relay_id: int(value != 0)
-                        for relay_id, value in zip(
-                            RELAYS.keys(), relay_response.registers
-                        )
+                        relay_id: int(value != 0) for relay_id, value in zip(RELAYS.keys(), relay_response.registers)
                     }
 
                     # All D-Bus updates are executed by the GLib main loop.
-                    GLib.idle_add(
-                        self.apply_hardware_states,
-                        input_states,
-                        relay_feedback
-                    )
 
+                    GLib.idle_add(self.apply_hardware_states, input_states, relay_feedback)
                 except Exception as ex:
                     print(f"Modbus communication error: {ex}")
                     last_sent_states.clear()
                     self.modbus_client.close()
-
                 self.stop_event.wait(MODBUS_POLL_INTERVAL)
-
         finally:
             self.modbus_client.close()
             print("Modbus worker stopped")
@@ -303,23 +248,14 @@ class GensetIOController:
 
         if self.service is None:
             return False
-
         for input_id, value in input_states.items():
             self.service[f"/GenericInput/{input_id}/Value"] = value
-
         for relay_id, value in relay_feedback.items():
-            self.service[f"/SwitchableOutput/{relay_id}/Status"] = (
-                0x09 if value else 0x00
-            )
-
+            self.service[f"/SwitchableOutput/{relay_id}/Status"] = 0x09 if value else 0x00
         return False
 
     def start_modbus_thread(self):
-        self.modbus_thread = threading.Thread(
-            target=self.modbus_worker,
-            name="DingtianModbus",
-            daemon=True
-        )
+        self.modbus_thread = threading.Thread(target=self.modbus_worker, name="DingtianModbus", daemon=True)
         self.modbus_thread.start()
 
     # --------------------------------------------------
@@ -337,20 +273,15 @@ class GensetIOController:
         except (ValueError, TypeError):
             print(f"Invalid relay command: {relay_id} = {new_value}")
             return False
-
         if state not in (0, 1):
             print(f"Invalid relay state: {relay_id} = {state}")
             return False
-
-        print(
-            f"Relay command received: {relay_id} = "
-            f"{'ON' if state else 'OFF'}"
-        )
+        print(f"Relay command received: {relay_id} = " f"{'ON' if state else 'OFF'}")
 
         # The Modbus worker sends this requested state to the Dingtian.
+
         with self.relay_state_lock:
             self.desired_relay_states[relay_id] = state
-
         return True
 
     # --------------------------------------------------
@@ -359,12 +290,10 @@ class GensetIOController:
 
     def create_dbus_service(self):
 
-        self.service = VeDbusService(
-            SERVICE_NAME,
-            register=False
-        )
+        self.service = VeDbusService(SERVICE_NAME, register=False)
 
         # Device information
+
         self.service.add_path("/DeviceInstance", value=DEVICE_INSTANCE)
         self.service.add_path("/ProductName", value=PRODUCT_NAME)
         self.service.add_path("/Connected", value=1)
@@ -373,48 +302,29 @@ class GensetIOController:
         self.service.add_path("/Mgmt/ProcessVersion", value=VERSION)
 
         # Inputs
+
         for input_id, config in INPUTS.items():
 
             base = f"/GenericInput/{input_id}"
             name = config["name"]
 
             self.service.add_path(base + "/Name", value=name)
-            self.service.add_path(
-                base + "/Value",
-                value=config["initial"]
-            )
+            self.service.add_path(base + "/Value", value=config["initial"])
             self.service.add_path(base + "/Status", value=0)
-            self.service.add_path(
-                base + "/Settings/CustomName",
-                value=name
-            )
-            self.service.add_path(
-                base + "/Settings/Group",
-                value=INPUT_GROUP
-            )
-            self.service.add_path(
-                base + "/Settings/Type",
-                value=0
-            )
+            self.service.add_path(base + "/Settings/CustomName", value=name)
+            self.service.add_path(base + "/Settings/Group", value=INPUT_GROUP)
+            self.service.add_path(base + "/Settings/Type", value=0)
 
             # Preserve the existing JSON-encoded Labels representation.
-            self.service.add_path(
-                base + "/Settings/Labels",
-                value=json.dumps(config["labels"])
-            )
 
-            self.service.add_path(
-                base + "/Settings/ValidTypes",
-                value=1
-            )
-            self.service.add_path(
-                base + "/Settings/ShowUIInput",
-                value=6
-            )
+            self.service.add_path(base + "/Settings/Labels", value=json.dumps(config["labels"]))
+
+            self.service.add_path(base + "/Settings/ValidTypes", value=1)
+            self.service.add_path(base + "/Settings/ShowUIInput", value=6)
 
             print(f"Registered input: {name}")
-
         # Relays
+
         for relay_id, config in RELAYS.items():
 
             base = f"/SwitchableOutput/{relay_id}"
@@ -423,46 +333,19 @@ class GensetIOController:
 
             self.service.add_path(base + "/Name", value=name)
             self.service.add_path(
-                base + "/State",
-                value=initial,
-                writeable=True,
-                onchangecallback=partial(
-                    self.relay_changed,
-                    relay_id
-                )
+                base + "/State", value=initial, writeable=True, onchangecallback=partial(self.relay_changed, relay_id)
             )
-            self.service.add_path(
-                base + "/Status",
-                value=0x09 if initial else 0x00
-            )
-            self.service.add_path(
-                base + "/Settings/CustomName",
-                value=name
-            )
-            self.service.add_path(
-                base + "/Settings/Group",
-                value=RELAY_GROUP
-            )
-            self.service.add_path(
-                base + "/Settings/Type",
-                value=1
-            )
-            self.service.add_path(
-                base + "/Settings/ValidTypes",
-                value=2
-            )
-            self.service.add_path(
-                base + "/Settings/ShowUIControl",
-                value=6
-            )
-            self.service.add_path(
-                base + "/Auto",
-                value=0
-            )
+            self.service.add_path(base + "/Status", value=0x09 if initial else 0x00)
+            self.service.add_path(base + "/Settings/CustomName", value=name)
+            self.service.add_path(base + "/Settings/Group", value=RELAY_GROUP)
+            self.service.add_path(base + "/Settings/Type", value=1)
+            self.service.add_path(base + "/Settings/ValidTypes", value=2)
+            self.service.add_path(base + "/Settings/ShowUIControl", value=6)
+            self.service.add_path(base + "/Auto", value=0)
 
             print(f"Registered relay: {name}")
-
         # Register after all paths have been created.
+
         self.service.register()
 
         print(f"D-Bus service registered: {SERVICE_NAME}")
@@ -481,21 +364,16 @@ class GensetIOController:
         signal.signal(signal.SIGTERM, self.shutdown)
         signal.signal(signal.SIGINT, self.shutdown)
 
-        print(
-            f"Genset IO running: {len(INPUTS)} inputs, "
-            f"{len(RELAYS)} relays"
-        )
+        print(f"Genset IO running: {len(INPUTS)} inputs, " f"{len(RELAYS)} relays")
 
         self.start_modbus_thread()
 
         try:
             self.mainloop.run()
-
         finally:
             self.stop_event.set()
             if self.modbus_thread is not None:
                 self.modbus_thread.join(timeout=3.0)
-
             print("Unregistering D-Bus service")
             if self.service is not None:
                 self.service.__del__()
@@ -506,6 +384,7 @@ class GensetIOController:
 # --------------------------------------------------
 # ENTRY POINT
 # --------------------------------------------------
+
 
 def main():
 
@@ -521,5 +400,6 @@ if __name__ == "__main__":
         print(ex)
         print("Restart required, going down in 5s")
         import time
+
         time.sleep(5)
         raise
