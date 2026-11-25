@@ -42,42 +42,56 @@ INPUTS = {
         "group": "Buttons",
         "initial": 0,
         "labels": ["Released", "Pressed"],
+        "show_in_local": False,
+        "show_in_vrm": True
     },
     "on_button": {
         "name": "On Button",
         "group": "Buttons",
         "initial": 0,
         "labels": ["Released", "Pressed"],
+        "show_in_local": False,
+        "show_in_vrm": True
     },
     "charge_button": {
         "name": "ChargeOnly Button",
         "group": "Buttons",
         "initial": 0,
         "labels": ["Released", "Pressed"],
+        "show_in_local": False,
+        "show_in_vrm": True
     },
     "off_button_led_state": {
         "name": "Off LED State",
         "group": "LEDs",
         "initial": 0,
         "labels": ["Off", "On"],
+        "show_in_local": True,
+        "show_in_vrm": True
     },
     "on_button_led_state": {
         "name": "On LED State",
         "group": "LEDs",
         "initial": 0,
         "labels": ["Off", "On"],
+        "show_in_local": True,
+        "show_in_vrm": True
     },
     "charge_button_led_state": {
         "name": "ChargeOnly LED State",
         "group": "LEDs",
         "initial": 0,
         "labels": ["Off", "On"],
+        "show_in_local": True,
+        "show_in_vrm": True
     },
     "bms_wake_state": {
         "name": "BMS Wake State",
         "group": "BMS",
         "initial": 0,
         "labels": ["Inactive", "Active"],
+        "show_in_local": True,
+        "show_in_vrm": True
     }
 }
 
@@ -85,22 +99,30 @@ DIAGNOSTICS = {
     "cpu_load_avg_1": {
         "name": "CPU Load Average 1m",
         "group": "Diagnostics",
-        "initial": 0
+        "initial": 0,
+        "show_in_local": True,
+        "show_in_vrm": True
     },
     "cpu_load_avg_5": {
         "name": "CPU Load Average 5m",
         "group": "Diagnostics",
-        "initial": 0
+        "initial": 0,
+        "show_in_local": True,
+        "show_in_vrm": True
     },
     "cpu_load_avg_15": {
         "name": "CPU Load Average 15m",
         "group": "Diagnostics",
-        "initial": 0
+        "initial": 0,
+        "show_in_local": True,
+        "show_in_vrm": True
     },
     "memory_used_percent": {
         "name": "RAM Used (%)",
         "group": "Diagnostics",
-        "initial": 0
+        "initial": 0,
+        "show_in_local": True,
+        "show_in_vrm": True
     }
 }
 
@@ -109,49 +131,65 @@ RELAYS = {
         "name": "Off Button LED",
         "group": "LEDs",
         "initial": 0,
-        "user_control": False
+        "show_in_local": False,
+        "show_in_vrm": True,
+        "disable_control": True
     },
     "on_button_led": {
         "name": "On Button LED",
         "group": "LEDs",
         "initial": 0,
-        "user_control": False
+        "show_in_local": False,
+        "show_in_vrm": True,
+        "disable_control": True
     },
     "charge_button_led": {
         "name": "ChargeOnly Button LED",
         "group": "LEDs",
         "initial": 0,
-        "user_control": False
+        "show_in_local": False,
+        "show_in_vrm": True,
+        "disable_control": True
     },
     "bms_wake": {
         "name": "BMS Wake Signal",
         "group": "BMS",
         "initial": 0,
-        "user_control": False
+        "show_in_local": False,
+        "show_in_vrm": True,
+        "disable_control": True
     },
     "dse_remote_start": {
         "name": "DSE Remote Start",
         "group": "Genset",
         "initial": 0,
-        "user_control": False
+        "show_in_local": False,
+        "show_in_vrm": True,
+        "disable_control": True
     },
     "dse_lock_keypad_mode": {
         "name": "DSE Lock Keypad Mode Request",
         "group": "Genset",
         "initial": 0,
-        "user_control": False
+        "show_in_local": False,
+        "show_in_vrm": True,
+        "disable_control": True
     },
     "earth_leakage_reset": {
         "name": "Earth Leakage Reset",
         "group": "Genset",
         "initial": 0,
-        "user_control": True
+        "show_in_local": False,
+        "show_in_vrm": True,
+        "disable_control": False
     },
     "reverse_power_detection": {
         "name": "Reverse Power Detection Signal",
         "group": "Genset",
         "initial": 0,
-        "user_control": False
+        "show_in_local": False,
+        "show_in_vrm": True,
+        "disable_control": True
     },
 }
 
@@ -226,9 +264,15 @@ class GensetIOController:
                             raise ValueError(f"Input {device_id} labels must be a list")
                         if not all(isinstance(label, str) for label in labels):
                             raise ValueError(f"Input {device_id} labels must contain only strings")
+
+                if config.get("show_in_local") is None:
+                    raise ValueError(f"Invalid show_in_local value for {device_id}")
+                if config.get("show_in_vrm") is None:
+                    raise ValueError(f"Invalid show_in_vrm value for {device_id}")
+
                 if category == "relay":
-                    if config.get("user_control") is None:
-                        raise ValueError(f"Invalid user_control option for {device_id}")
+                    if config.get("disable_control") is None:
+                        raise ValueError(f"Invalid disable_control value for {device_id}")
 
                 group = config.get("group", "")
 
@@ -401,7 +445,12 @@ class GensetIOController:
             self.service[f"/GenericInput/{input_id}/Value"] = value
 
         for relay_id, value in relay_feedback.items():
-            self.service[f"/SwitchableOutput/{relay_id}/Status"] = 0x09 if value else 0x00
+            status = 0x09 if value else 0x00
+
+            if RELAYS[relay_id].get("disable_control") == True:
+                status |= 0x20
+
+            self.service[f"/SwitchableOutput/{relay_id}/Status"] = status
         return False
 
     def populate_diagnostics(self):
@@ -498,7 +547,13 @@ class GensetIOController:
                 )
             )
             self.service.add_path(base + "/Settings/ValidTypes", value=1)
-            self.service.add_path(base + "/Settings/ShowUIInput", value=6)
+
+            show_ui_control = 0
+            if config.get("show_in_local"):
+                show_ui_control += 2
+            if config.get("show_in_vrm"):
+                show_ui_control += 4
+            self.service.add_path(base + "/Settings/ShowUIControl", value=show_ui_control)
 
             print(f"Registered input: {name}")
         # Relays
@@ -513,19 +568,24 @@ class GensetIOController:
             self.service.add_path(
                 base + "/State", value=initial, writeable=True, onchangecallback=partial(self.relay_changed, relay_id)
             )
-            self.service.add_path(base + "/Status", value=0x00)
+            if config.get("disable_control"):
+                self.service.add_path(base + "/Status", value=0x20)
+            else:
+                self.service.add_path(base + "/Status", value=0x00)
+
             self.service.add_path(base + "/Settings/CustomName", value=name)
             self.service.add_path(base + "/Settings/Group", config["group"])
             # self.service.add_path(base + "/Auto", value=0)
 
-            if config['user_control']:
-                self.service.add_path(base + "/Settings/Type", value=1)
-                self.service.add_path(base + "/Settings/ValidTypes", value=2)
-                self.service.add_path(base + "/Settings/ShowUIControl", value=6)
-            else:
-                self.service.add_path(base + "/Settings/Type", value=None)
-                self.service.add_path(base + "/Settings/ValidTypes", value=0)
-                self.service.add_path(base + "/Settings/ShowUIControl", value=6)
+            self.service.add_path(base + "/Settings/Type", value=1)
+            self.service.add_path(base + "/Settings/ValidTypes", value=2)
+
+            show_ui_control = 0
+            if config.get("show_in_local"):
+                show_ui_control += 2
+            if config.get("show_in_vrm"):
+                show_ui_control += 4
+            self.service.add_path(base + "/Settings/ShowUIControl", value=show_ui_control)
 
             print(f"Registered relay: {name}")
         # Register after all paths have been created.
