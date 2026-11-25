@@ -228,6 +228,7 @@ class GensetIOController:
         self.modbus_client = None
         self.relay_state_lock = threading.Lock()
         self.desired_relay_states = {relay_id: int(config["initial"]) for relay_id, config in RELAYS.items()}
+        self.relay_states_initialised = threading.Event()
 
         self.validate_config()
         self.create_dbus_service()
@@ -320,10 +321,6 @@ class GensetIOController:
                         print("Modbus connected")
                         GLib.idle_add(self.set_connection_state, 1)
 
-                    # Snapshot the requested relay states.
-                    with self.relay_state_lock:
-                        requested_states = dict(self.desired_relay_states)
-
                     # Read the actual relay states from the Dingtian.
                     relay_response = self.modbus_client.read_holding_registers(
                         MODBUS_RELAY_REGISTER_START,
@@ -342,6 +339,19 @@ class GensetIOController:
                         relay_id: int(value != 0)
                         for relay_id, value in zip(RELAYS.keys(), relay_response.registers)
                     }
+
+                    # On the first successful read after startup, adopt the
+                    # physical relay states instead of applying config defaults.
+                    if not self.relay_states_initialised.is_set():
+                        GLib.idle_add(self.initialise_relay_states, reported_states)
+
+                        while not self.relay_states_initialised.is_set():
+                            if self.stop_event.wait(0.05):
+                                return
+
+                    # Snapshot the requested relay states after initialisation.
+                    with self.relay_state_lock:
+                        requested_states = dict(self.desired_relay_states)
 
                     # Compare requested states with actual hardware states.
                     for channel, relay_id in enumerate(RELAYS):
@@ -436,6 +446,28 @@ class GensetIOController:
             print("Modbus worker stopped")
 
 
+    def initialise_relay_states(self, relay_states):
+        """Adopt the physical relay states as the initial requested states."""
+
+        if self.service is None:
+            return False
+
+        print("Synchronising initial relay states with hardware")
+
+        with self.relay_state_lock:
+            self.desired_relay_states.update(relay_states)
+
+        for relay_id, value in relay_states.items():
+            self.service[f"/SwitchableOutput/{relay_id}/State"] = value
+
+        self.apply_hardware_states({}, relay_states)
+
+        for relay_id, value in relay_states.items():
+            print(f"Initial relay state: {relay_id} = {'ON' if value else 'OFF'}")
+
+        self.relay_states_initialised.set()
+        return False
+
     def apply_hardware_states(self, input_states, relay_feedback):
         """Apply hardware values on the GLib main-loop thread."""
 
@@ -488,6 +520,10 @@ class GensetIOController:
         Called when an external application writes to
         /SwitchableOutput/<id>/State.
         """
+
+        if not self.relay_states_initialised.is_set():
+            print(f"Ignoring relay command during initialisation: {relay_id}", flush=True)
+            return False
 
         try:
             state = int(new_value)
@@ -647,3 +683,4 @@ if __name__ == "__main__":
 
         time.sleep(5)
         raise
+
