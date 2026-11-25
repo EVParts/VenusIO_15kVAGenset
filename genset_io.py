@@ -109,41 +109,49 @@ RELAYS = {
         "name": "Off Button LED",
         "group": "LEDs",
         "initial": 0,
+        "user_control": False
     },
     "on_button_led": {
         "name": "On Button LED",
         "group": "LEDs",
         "initial": 0,
+        "user_control": False
     },
     "charge_button_led": {
         "name": "ChargeOnly Button LED",
         "group": "LEDs",
         "initial": 0,
+        "user_control": False
     },
     "bms_wake": {
         "name": "BMS Wake Signal",
         "group": "BMS",
         "initial": 0,
+        "user_control": False
     },
     "dse_remote_start": {
         "name": "DSE Remote Start",
         "group": "Genset",
         "initial": 0,
+        "user_control": False
     },
     "dse_lock_keypad_mode": {
         "name": "DSE Lock Keypad Mode Request",
         "group": "Genset",
         "initial": 0,
+        "user_control": False
     },
     "earth_leakage_reset": {
         "name": "Earth Leakage Reset",
         "group": "Genset",
         "initial": 0,
+        "user_control": True
     },
     "reverse_power_detection": {
         "name": "Reverse Power Detection Signal",
         "group": "Genset",
         "initial": 0,
+        "user_control": False
     },
 }
 
@@ -218,7 +226,9 @@ class GensetIOController:
                             raise ValueError(f"Input {device_id} labels must be a list")
                         if not all(isinstance(label, str) for label in labels):
                             raise ValueError(f"Input {device_id} labels must contain only strings")
-
+                if category == "relay":
+                    if config.get("user_control") is None:
+                        raise ValueError(f"Invalid user_control option for {device_id}")
 
                 group = config.get("group", "")
 
@@ -506,10 +516,16 @@ class GensetIOController:
             self.service.add_path(base + "/Status", value=0x00)
             self.service.add_path(base + "/Settings/CustomName", value=name)
             self.service.add_path(base + "/Settings/Group", config["group"])
-            self.service.add_path(base + "/Settings/Type", value=1)
-            self.service.add_path(base + "/Settings/ValidTypes", value=2)
-            self.service.add_path(base + "/Settings/ShowUIControl", value=6)
-            self.service.add_path(base + "/Auto", value=0)
+            # self.service.add_path(base + "/Auto", value=0)
+
+            if config['user_control']:
+                self.service.add_path(base + "/Settings/Type", value=1)
+                self.service.add_path(base + "/Settings/ValidTypes", value=2)
+                self.service.add_path(base + "/Settings/ShowUIControl", value=6)
+            else:
+                self.service.add_path(base + "/Settings/Type", value=None)
+                self.service.add_path(base + "/Settings/ValidTypes", value=0)
+                self.service.add_path(base + "/Settings/ShowUIControl", value=6)
 
             print(f"Registered relay: {name}")
         # Register after all paths have been created.
