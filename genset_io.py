@@ -40,7 +40,6 @@ INPUTS = {
     "off_button": {
         "name": "Off Button",
         "group": "Buttons",
-        "initial": 0,
         "labels": ["Released", "Pressed"],
         "show_in_local": False,
         "show_in_vrm": True
@@ -48,7 +47,6 @@ INPUTS = {
     "on_button": {
         "name": "On Button",
         "group": "Buttons",
-        "initial": 0,
         "labels": ["Released", "Pressed"],
         "show_in_local": False,
         "show_in_vrm": True
@@ -56,7 +54,6 @@ INPUTS = {
     "charge_button": {
         "name": "ChargeOnly Button",
         "group": "Buttons",
-        "initial": 0,
         "labels": ["Released", "Pressed"],
         "show_in_local": False,
         "show_in_vrm": True
@@ -64,7 +61,6 @@ INPUTS = {
     "off_button_led_state": {
         "name": "Off LED State",
         "group": "LEDs",
-        "initial": 0,
         "labels": ["Off", "On"],
         "show_in_local": True,
         "show_in_vrm": True
@@ -72,7 +68,6 @@ INPUTS = {
     "on_button_led_state": {
         "name": "On LED State",
         "group": "LEDs",
-        "initial": 0,
         "labels": ["Off", "On"],
         "show_in_local": True,
         "show_in_vrm": True
@@ -80,7 +75,6 @@ INPUTS = {
     "charge_button_led_state": {
         "name": "ChargeOnly LED State",
         "group": "LEDs",
-        "initial": 0,
         "labels": ["Off", "On"],
         "show_in_local": True,
         "show_in_vrm": True
@@ -88,7 +82,6 @@ INPUTS = {
     "bms_wake_state": {
         "name": "BMS Wake State",
         "group": "BMS",
-        "initial": 0,
         "labels": ["Inactive", "Active"],
         "show_in_local": True,
         "show_in_vrm": True
@@ -99,28 +92,24 @@ DIAGNOSTICS = {
     "cpu_load_avg_1": {
         "name": "CPU Load Average 1m",
         "group": "Diagnostics",
-        "initial": 0,
         "show_in_local": True,
         "show_in_vrm": True
     },
     "cpu_load_avg_5": {
         "name": "CPU Load Average 5m",
         "group": "Diagnostics",
-        "initial": 0,
         "show_in_local": True,
         "show_in_vrm": True
     },
     "cpu_load_avg_15": {
         "name": "CPU Load Average 15m",
         "group": "Diagnostics",
-        "initial": 0,
         "show_in_local": True,
         "show_in_vrm": True
     },
     "memory_used_percent": {
         "name": "RAM Used (%)",
         "group": "Diagnostics",
-        "initial": 0,
         "show_in_local": True,
         "show_in_vrm": True
     }
@@ -130,7 +119,6 @@ RELAYS = {
     "off_button_led": {
         "name": "Off Button LED",
         "group": "LEDs",
-        "initial": 0,
         "show_in_local": False,
         "show_in_vrm": True,
         "disable_control": True
@@ -138,7 +126,6 @@ RELAYS = {
     "on_button_led": {
         "name": "On Button LED",
         "group": "LEDs",
-        "initial": 0,
         "show_in_local": False,
         "show_in_vrm": True,
         "disable_control": True
@@ -146,7 +133,6 @@ RELAYS = {
     "charge_button_led": {
         "name": "ChargeOnly Button LED",
         "group": "LEDs",
-        "initial": 0,
         "show_in_local": False,
         "show_in_vrm": True,
         "disable_control": True
@@ -154,7 +140,6 @@ RELAYS = {
     "bms_wake": {
         "name": "BMS Wake Signal",
         "group": "BMS",
-        "initial": 0,
         "show_in_local": False,
         "show_in_vrm": True,
         "disable_control": True
@@ -162,7 +147,6 @@ RELAYS = {
     "dse_remote_start": {
         "name": "DSE Remote Start",
         "group": "Genset",
-        "initial": 0,
         "show_in_local": False,
         "show_in_vrm": True,
         "disable_control": True
@@ -170,7 +154,6 @@ RELAYS = {
     "dse_lock_keypad_mode": {
         "name": "DSE Lock Keypad Mode Request",
         "group": "Genset",
-        "initial": 0,
         "show_in_local": False,
         "show_in_vrm": True,
         "disable_control": True
@@ -178,7 +161,6 @@ RELAYS = {
     "earth_leakage_reset": {
         "name": "Earth Leakage Reset",
         "group": "Genset",
-        "initial": 0,
         "show_in_local": False,
         "show_in_vrm": True,
         "disable_control": False
@@ -186,7 +168,6 @@ RELAYS = {
     "reverse_power_detection": {
         "name": "Reverse Power Detection Signal",
         "group": "Genset",
-        "initial": 0,
         "show_in_local": False,
         "show_in_vrm": True,
         "disable_control": True
@@ -227,11 +208,11 @@ class GensetIOController:
         self.modbus_thread = None
         self.modbus_client = None
         self.relay_state_lock = threading.Lock()
-        self.desired_relay_states = {relay_id: int(config["initial"]) for relay_id, config in RELAYS.items()}
+        self.desired_relay_states = {}
         self.relay_states_initialised = threading.Event()
+        self.service_initialised = threading.Event()
 
         self.validate_config()
-        self.create_dbus_service()
 
     # --------------------------------------------------
     # CONFIGURATION
@@ -255,8 +236,6 @@ class GensetIOController:
                     raise ValueError(f"Missing name for {device_id}")
                 if len(name.encode("utf-8")) > 32:
                     raise ValueError(f"Name too long for {device_id}")
-                if config.get("initial") not in (0, 1):
-                    raise ValueError(f"Invalid initial state for {device_id}")
                 if category == "input":
                     labels = config.get("labels")
 
@@ -319,7 +298,47 @@ class GensetIOController:
                         connected = True
                         connection_error_reported = False
                         print("Modbus connected")
-                        GLib.idle_add(self.set_connection_state, 1)
+                        # Do not register the D-Bus service until we have valid
+                        # input and relay states from the hardware.
+                        if not self.service_initialised.is_set():
+                            relay_response = self.modbus_client.read_holding_registers(
+                                MODBUS_RELAY_REGISTER_START,
+                                count=len(RELAYS),
+                                unit=MODBUS_UNIT_ID
+                            )
+                            if relay_response.isError():
+                                raise RuntimeError(f"Initial Modbus relay read failed: {relay_response}")
+                            if len(relay_response.registers) != len(RELAYS):
+                                raise RuntimeError("Unexpected number of initial relay registers returned")
+
+                            input_response = self.modbus_client.read_holding_registers(
+                                MODBUS_INPUT_REGISTER_START,
+                                count=len(INPUTS),
+                                unit=MODBUS_UNIT_ID
+                            )
+                            if input_response.isError():
+                                raise RuntimeError(f"Initial Modbus input read failed: {input_response}")
+                            if len(input_response.registers) != len(INPUTS):
+                                raise RuntimeError("Unexpected number of initial input registers returned")
+
+                            initial_relay_states = {
+                                relay_id: int(value != 0)
+                                for relay_id, value in zip(RELAYS.keys(), relay_response.registers)
+                            }
+                            initial_input_states = {
+                                input_id: int(value != 0)
+                                for input_id, value in zip(INPUTS.keys(), input_response.registers)
+                            }
+
+                            GLib.idle_add(
+                                self.create_dbus_service,
+                                initial_input_states,
+                                initial_relay_states
+                            )
+
+                            while not self.service_initialised.is_set():
+                                if self.stop_event.wait(0.05):
+                                    return
 
                     # Read the actual relay states from the Dingtian.
                     relay_response = self.modbus_client.read_holding_registers(
@@ -339,15 +358,6 @@ class GensetIOController:
                         relay_id: int(value != 0)
                         for relay_id, value in zip(RELAYS.keys(), relay_response.registers)
                     }
-
-                    # On the first successful read after startup, adopt the
-                    # physical relay states instead of applying config defaults.
-                    if not self.relay_states_initialised.is_set():
-                        GLib.idle_add(self.initialise_relay_states, reported_states)
-
-                        while not self.relay_states_initialised.is_set():
-                            if self.stop_event.wait(0.05):
-                                return
 
                     # Snapshot the requested relay states after initialisation.
                     with self.relay_state_lock:
@@ -406,7 +416,7 @@ class GensetIOController:
                         count=len(INPUTS),
                         unit=MODBUS_UNIT_ID
                     )
-                    print(f"Modbus Inputs : {relay_response}", flush=True)
+                    print(f"Modbus Inputs : {input_response}", flush=True)
 
                     if input_response.isError():
                         raise RuntimeError(f"Modbus input read failed: {input_response}")
@@ -445,28 +455,6 @@ class GensetIOController:
             self.modbus_client.close()
             print("Modbus worker stopped")
 
-
-    def initialise_relay_states(self, relay_states):
-        """Adopt the physical relay states as the initial requested states."""
-
-        if self.service is None:
-            return False
-
-        print("Synchronising initial relay states with hardware")
-
-        with self.relay_state_lock:
-            self.desired_relay_states.update(relay_states)
-
-        for relay_id, value in relay_states.items():
-            self.service[f"/SwitchableOutput/{relay_id}/State"] = value
-
-        self.apply_hardware_states({}, relay_states)
-
-        for relay_id, value in relay_states.items():
-            print(f"Initial relay state: {relay_id} = {'ON' if value else 'OFF'}")
-
-        self.relay_states_initialised.set()
-        return False
 
     def apply_hardware_states(self, input_states, relay_feedback):
         """Apply hardware values on the GLib main-loop thread."""
@@ -545,15 +533,20 @@ class GensetIOController:
     # D-BUS INITIALISATION
     # --------------------------------------------------
 
-    def create_dbus_service(self):
+    def create_dbus_service(self, input_states, relay_states):
+        """Create and register D-Bus using the first valid hardware snapshot."""
 
         self.service = VeDbusService(SERVICE_NAME, register=False)
+
+        # Adopt the physical relay states before exposing the service.
+        with self.relay_state_lock:
+            self.desired_relay_states.update(relay_states)
 
         # Device information
 
         self.service.add_path("/DeviceInstance", value=DEVICE_INSTANCE)
         self.service.add_path("/ProductName", value=PRODUCT_NAME)
-        self.service.add_path("/Connected", value=0)
+        self.service.add_path("/Connected", value=1)
         self.service.add_path("/Mgmt/Connection", value="Local")
         self.service.add_path("/Mgmt/ProcessName", value=__file__)
         self.service.add_path("/Mgmt/ProcessVersion", value=VERSION)
@@ -566,7 +559,10 @@ class GensetIOController:
             name = config["name"]
 
             self.service.add_path(base + "/Name", value=name)
-            self.service.add_path(base + "/Value", value=config["initial"])
+            self.service.add_path(
+                base + "/Value",
+                value=input_states[input_id] if input_id in INPUTS else 0
+            )
             self.service.add_path(base + "/Status", value=0)
             self.service.add_path(base + "/Settings/CustomName", value=name)
             self.service.add_path(base + "/Settings/Group", config["group"])
@@ -598,16 +594,16 @@ class GensetIOController:
 
             base = f"/SwitchableOutput/{relay_id}"
             name = config["name"]
-            initial = config["initial"]
+            initial = relay_states[relay_id]
 
             self.service.add_path(base + "/Name", value=name)
             self.service.add_path(
                 base + "/State", value=initial, writeable=True, onchangecallback=partial(self.relay_changed, relay_id)
             )
+            status = 0x09 if initial else 0x00
             if config.get("disable_control"):
-                self.service.add_path(base + "/Status", value=0x20)
-            else:
-                self.service.add_path(base + "/Status", value=0x00)
+                status |= 0x20
+            self.service.add_path(base + "/Status", value=status)
 
             self.service.add_path(base + "/Settings/CustomName", value=name)
             self.service.add_path(base + "/Settings/Group", config["group"])
@@ -629,6 +625,14 @@ class GensetIOController:
         self.service.register()
 
         print(f"D-Bus service registered: {SERVICE_NAME}")
+
+        for input_id, value in input_states.items():
+            print(f"Initial input state: {input_id} = {value}", flush=True)
+        for relay_id, value in relay_states.items():
+            print(f"Initial relay state: {relay_id} = {value}", flush=True)
+
+        self.relay_states_initialised.set()
+        self.service_initialised.set()
 
     # --------------------------------------------------
     # APPLICATION
@@ -683,4 +687,5 @@ if __name__ == "__main__":
 
         time.sleep(5)
         raise
+
 
