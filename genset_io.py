@@ -276,6 +276,7 @@ class GensetIOController:
                         count=len(RELAYS),
                         unit=MODBUS_UNIT_ID
                     )
+                    print(f"Modbus Relays : {relay_response}", flush=True)
 
                     if relay_response.isError():
                         raise RuntimeError(f"Modbus relay read failed: {relay_response}")
@@ -303,6 +304,7 @@ class GensetIOController:
                             requested,
                             unit=MODBUS_UNIT_ID
                         )
+                        print(f"Modbus Write : {response}", flush=True)
 
                         if response.isError():
                             raise RuntimeError(
@@ -321,6 +323,7 @@ class GensetIOController:
                         count=len(RELAYS),
                         unit=MODBUS_UNIT_ID
                     )
+                    print(f"Modbus Relays : {relay_response}", flush=True)
 
                     if relay_response.isError():
                         raise RuntimeError(f"Modbus relay read failed: {relay_response}")
@@ -339,6 +342,7 @@ class GensetIOController:
                         count=len(INPUTS),
                         unit=MODBUS_UNIT_ID
                     )
+                    print(f"Modbus Inputs : {relay_response}", flush=True)
 
                     if input_response.isError():
                         raise RuntimeError(f"Modbus input read failed: {input_response}")
@@ -398,7 +402,7 @@ class GensetIOController:
         cpu_load_avg_15 = round(psu_load_avg[2], 2)
         memory = psutil.virtual_memory()
         memory_used_percent = round(memory.percent, 1)
-        print(f"memory used (%) : {memory_used_percent:.2f}, cpu load avg 1m/5m/15m : {cpu_load_avg_1}/{cpu_load_avg_5}/{cpu_load_avg_15}")
+        print(f"memory used (%) : {memory_used_percent:.2f}, cpu load avg 1m/5m/15m : {cpu_load_avg_1}/{cpu_load_avg_5}/{cpu_load_avg_15}", flush=True)
         self.service[f'/GenericInput/cpu_load_avg_1/Value'] = cpu_load_avg_1
         self.service[f'/GenericInput/cpu_load_avg_5/Value'] = cpu_load_avg_5
         self.service[f'/GenericInput/cpu_load_avg_15/Value'] = cpu_load_avg_15
@@ -429,12 +433,12 @@ class GensetIOController:
         try:
             state = int(new_value)
         except (ValueError, TypeError):
-            print(f"Invalid relay command: {relay_id} = {new_value}")
+            print(f"Invalid relay command: {relay_id} = {new_value}", flush=True)
             return False
         if state not in (0, 1):
-            print(f"Invalid relay state: {relay_id} = {state}")
+            print(f"Invalid relay state: {relay_id} = {state}", flush=True)
             return False
-        print(f"Relay command received: {relay_id} = " f"{'ON' if state else 'OFF'}")
+        print(f"Relay command received: {relay_id} = " f"{'ON' if state else 'OFF'}", flush=True)
 
         # The Modbus worker sends this requested state to the Dingtian.
 
