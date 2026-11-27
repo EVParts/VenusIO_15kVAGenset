@@ -288,6 +288,7 @@ class GensetIOController:
         try:
             while not self.stop_event.is_set():
                 diagnostic_counter += 1
+
                 try:
                     if not connected:
                         if not self.modbus_client.connect():
@@ -297,38 +298,45 @@ class GensetIOController:
 
                         connected = True
                         connection_error_reported = False
-                        print("Modbus connected")
-                        # Do not register the D-Bus service until we have valid
-                        # input and relay states from the hardware.
-                        if not self.service_initialised.is_set():
-                            relay_response = self.modbus_client.read_holding_registers(
-                                MODBUS_RELAY_REGISTER_START,
-                                count=len(RELAYS),
-                                unit=MODBUS_UNIT_ID
-                            )
-                            if relay_response.isError():
-                                raise RuntimeError(f"Initial Modbus relay read failed: {relay_response}")
-                            if len(relay_response.registers) != len(RELAYS):
-                                raise RuntimeError("Unexpected number of initial relay registers returned")
+                        print("Modbus connected", flush=True)
 
-                            input_response = self.modbus_client.read_holding_registers(
-                                MODBUS_INPUT_REGISTER_START,
-                                count=len(INPUTS),
-                                unit=MODBUS_UNIT_ID
+                        # Do not register D-Bus until valid hardware states are available.
+                        if not self.service_initialised.is_set():
+
+                            relay_registers = self.read_modbus_registers(
+                                self.modbus_client,
+                                MODBUS_RELAY_REGISTER_START,
+                                len(RELAYS),
+                                "Initial relay read",
+                                MODBUS_UNIT_ID
                             )
-                            if input_response.isError():
-                                raise RuntimeError(f"Initial Modbus input read failed: {input_response}")
-                            if len(input_response.registers) != len(INPUTS):
-                                raise RuntimeError("Unexpected number of initial input registers returned")
+
+                            input_registers = self.read_modbus_registers(
+                                self.modbus_client,
+                                MODBUS_INPUT_REGISTER_START,
+                                len(INPUTS),
+                                "Initial input read",
+                                MODBUS_UNIT_ID
+                            )
 
                             initial_relay_states = {
                                 relay_id: int(value != 0)
-                                for relay_id, value in zip(RELAYS.keys(), relay_response.registers)
+                                for relay_id, value in zip(RELAYS, relay_registers)
                             }
+
                             initial_input_states = {
                                 input_id: int(value != 0)
-                                for input_id, value in zip(INPUTS.keys(), input_response.registers)
+                                for input_id, value in zip(INPUTS, input_registers)
                             }
+
+                            print(
+                                f"Initial Modbus Relays: {relay_registers}",
+                                flush=True
+                            )
+                            print(
+                                f"Initial Modbus Inputs: {input_registers}",
+                                flush=True
+                            )
 
                             GLib.idle_add(
                                 self.create_dbus_service,
@@ -340,30 +348,36 @@ class GensetIOController:
                                 if self.stop_event.wait(0.05):
                                     return
 
-                    # Read the actual relay states from the Dingtian.
-                    relay_response = self.modbus_client.read_holding_registers(
+                    # ---------------------------------------------------------
+                    # Read actual relay states
+                    # ---------------------------------------------------------
+
+                    relay_registers = self.read_modbus_registers(
+                        self.modbus_client,
                         MODBUS_RELAY_REGISTER_START,
-                        count=len(RELAYS),
-                        unit=MODBUS_UNIT_ID
+                        len(RELAYS),
+                        "Relay read",
+                        MODBUS_UNIT_ID
                     )
-                    print(f"Modbus Relays : {relay_response}", flush=True)
-
-                    if relay_response.isError():
-                        raise RuntimeError(f"Modbus relay read failed: {relay_response}")
-
-                    if len(relay_response.registers) != len(RELAYS):
-                        raise RuntimeError("Unexpected number of relay registers returned")
 
                     reported_states = {
                         relay_id: int(value != 0)
-                        for relay_id, value in zip(RELAYS.keys(), relay_response.registers)
+                        for relay_id, value in zip(RELAYS, relay_registers)
                     }
 
-                    # Snapshot the requested relay states after initialisation.
+                    print(
+                        f"Modbus Relays: {relay_registers} -> {reported_states}",
+                        flush=True
+                    )
+
+                    # Snapshot requested states.
                     with self.relay_state_lock:
                         requested_states = dict(self.desired_relay_states)
 
-                    # Compare requested states with actual hardware states.
+                    # ---------------------------------------------------------
+                    # Write relays where requested and actual states differ
+                    # ---------------------------------------------------------
+
                     for channel, relay_id in enumerate(RELAYS):
                         requested = requested_states[relay_id]
                         reported = reported_states[relay_id]
@@ -373,61 +387,68 @@ class GensetIOController:
 
                         register = MODBUS_RELAY_REGISTER_START + channel
 
-                        response = self.modbus_client.write_register(
+                        self.write_modbus_register(
+                            self.modbus_client,
                             register,
                             requested,
-                            unit=MODBUS_UNIT_ID
-                        )
-                        print(f"Modbus Write : {response}", flush=True)
-
-                        if response.isError():
-                            raise RuntimeError(
-                                f"Modbus write failed for {relay_id} "
-                                f"(register 0x{register:04X}): {response}"
-                            )
-
-                        print(
-                            f"Modbus relay command: {relay_id} = {requested} "
-                            f"(reported {reported}, register 0x{register:04X})"
+                            f"Relay {relay_id}",
+                            MODBUS_UNIT_ID
                         )
 
-                    # Read relay states again to obtain feedback after commands.
-                    relay_response = self.modbus_client.read_holding_registers(
+                    # ---------------------------------------------------------
+                    # Read relay states again for feedback
+                    # ---------------------------------------------------------
+
+                    relay_registers = self.read_modbus_registers(
+                        self.modbus_client,
                         MODBUS_RELAY_REGISTER_START,
-                        count=len(RELAYS),
-                        unit=MODBUS_UNIT_ID
+                        len(RELAYS),
+                        "Relay feedback read",
+                        MODBUS_UNIT_ID
                     )
-                    print(f"Modbus Relays : {relay_response}", flush=True)
-
-                    if relay_response.isError():
-                        raise RuntimeError(f"Modbus relay read failed: {relay_response}")
-
-                    if len(relay_response.registers) != len(RELAYS):
-                        raise RuntimeError("Unexpected number of relay registers returned")
 
                     relay_feedback = {
                         relay_id: int(value != 0)
-                        for relay_id, value in zip(RELAYS.keys(), relay_response.registers)
+                        for relay_id, value in zip(RELAYS, relay_registers)
                     }
 
-                    # Read the physical input states.
-                    input_response = self.modbus_client.read_holding_registers(
-                        MODBUS_INPUT_REGISTER_START,
-                        count=len(INPUTS),
-                        unit=MODBUS_UNIT_ID
+                    print(
+                        f"Modbus Relay Feedback: "
+                        f"{relay_registers} -> {relay_feedback}",
+                        flush=True
                     )
-                    print(f"Modbus Inputs : {input_response}", flush=True)
 
-                    if input_response.isError():
-                        raise RuntimeError(f"Modbus input read failed: {input_response}")
+                    # Report any relay that did not reach its requested state.
+                    for relay_id in RELAYS:
+                        if requested_states[relay_id] != relay_feedback[relay_id]:
+                            print(
+                                f"Modbus WARNING: {relay_id} requested "
+                                f"{requested_states[relay_id]}, "
+                                f"actual {relay_feedback[relay_id]}",
+                                flush=True
+                            )
 
-                    if len(input_response.registers) != len(INPUTS):
-                        raise RuntimeError("Unexpected number of input registers returned")
+                    # ---------------------------------------------------------
+                    # Read physical inputs
+                    # ---------------------------------------------------------
+
+                    input_registers = self.read_modbus_registers(
+                        self.modbus_client,
+                        MODBUS_INPUT_REGISTER_START,
+                        len(INPUTS),
+                        "Input read",
+                        MODBUS_UNIT_ID
+                    )
 
                     input_states = {
                         input_id: int(value != 0)
-                        for input_id, value in zip(INPUTS.keys(), input_response.registers)
+                        for input_id, value in zip(INPUTS, input_registers)
                     }
+
+                    print(
+                        f"Modbus Inputs: {input_registers} -> {input_states}",
+                        flush=True
+                    )
 
                     # Update D-Bus from the GLib main-loop thread.
                     GLib.idle_add(
@@ -436,25 +457,85 @@ class GensetIOController:
                         relay_feedback
                     )
 
+                    # ---------------------------------------------------------
+                    # Diagnostics
+                    # ---------------------------------------------------------
+
                     if diagnostic_counter >= 10:
                         self.populate_diagnostics()
                         diagnostic_counter = 0
 
                 except Exception as ex:
                     if connected or not connection_error_reported:
-                        print(f"Modbus communication error: {ex}")
+                        print(f"Modbus communication error: {ex}", flush=True)
 
                     connection_error_reported = True
                     connected = False
                     self.modbus_client.close()
+
                     GLib.idle_add(self.set_connection_state, 0)
 
                 self.stop_event.wait(MODBUS_POLL_INTERVAL)
 
         finally:
             self.modbus_client.close()
-            print("Modbus worker stopped")
+            print("Modbus worker stopped", flush=True)
 
+    @staticmethod
+    def read_modbus_registers(self, client, address, count, description, unit):
+        """Read and validate a block of Modbus holding registers."""
+
+        response = client.read_holding_registers(
+            address,
+            count=count,
+            unit=unit
+        )
+
+        if response is None:
+            raise RuntimeError(f"{description}: no Modbus response")
+
+        if response.isError():
+            raise RuntimeError(f"{description}: Modbus error: {response}")
+
+        if response.registers is None or len(response.registers) != count:
+            actual = len(response.registers) if response.registers else 0
+            raise RuntimeError(
+                f"{description}: received {actual} registers, expected {count}"
+            )
+
+        return response.registers
+
+    @staticmethod
+    def write_modbus_register(self, client, address, value, description, unit):
+        """Write and validate a single Modbus holding register."""
+
+        response = client.write_register(
+            address,
+            value,
+            unit=unit
+        )
+
+        if response is None:
+            raise RuntimeError(
+                f"{description}: no Modbus response "
+                f"(register 0x{address:04X}, value 0x{value:04X}). "
+                "Write outcome is unknown."
+            )
+
+        if response.isError():
+            raise RuntimeError(
+                f"{description}: Modbus write error: {response} "
+                f"(register 0x{address:04X}, value 0x{value:04X})"
+            )
+
+        print(
+            f"Modbus Write OK: {description}, "
+            f"register=0x{address:04X}, "
+            f"value=0x{value:04X}, response={response}",
+            flush=True
+        )
+
+        return response
 
     def apply_hardware_states(self, input_states, relay_feedback):
         """Apply hardware values on the GLib main-loop thread."""
