@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 
-import os
-import sys
 import signal
 import json
 import threading
 from itertools import chain
 
-import dbus
 
 from functools import partial
 
@@ -15,15 +12,12 @@ import psutil
 from pymodbus.client.sync import ModbusTcpClient
 from pymodbus.transaction import ModbusRtuFramer
 
+from plugin_dbus import create_service, create_input, create_relay
+
 # --------------------------------------------------
 # CONFIGURATION
 # --------------------------------------------------
 
-
-SERVICE_NAME = "com.victronenergy.switch.genset"
-DEVICE_INSTANCE = 0
-PRODUCT_NAME = "15kVA Genset IO Controller"
-VERSION = "1.0"
 
 # Dingtian Modbus TCP settings
 
@@ -179,16 +173,8 @@ RELAYS = {
 # --------------------------------------------------
 
 
-for path in [
-    "/opt/victronenergy/velib_python",
-    "/opt/victronenergy/dbus-systemcalc-py/ext/velib_python",
-]:
-    if os.path.isdir(path):
-        sys.path.insert(1, path)
-        break
 from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
-from vedbus import VeDbusService
 
 
 # --------------------------------------------------
@@ -202,6 +188,8 @@ class GensetIOController:
         DBusGMainLoop(set_as_default=True)
 
         self.service = None
+        self.inputs = {}
+        self.relays = {}
         self.mainloop = GLib.MainLoop()
         self.stop_event = threading.Event()
         self.modbus_thread = None
@@ -557,15 +545,10 @@ class GensetIOController:
         if self.service is None:
             return False
         for input_id, value in input_states.items():
-            self.service[f"/GenericInput/{input_id}/Value"] = value
+            self.inputs[input_id].update(value)
 
         for relay_id, value in relay_feedback.items():
-            status = 0x09 if value else 0x00
-
-            if RELAYS[relay_id].get("disable_control") == True:
-                status |= 0x20
-
-            self.service[f"/SwitchableOutput/{relay_id}/Status"] = status
+            self.relays[relay_id].update_status(value)
         return False
 
     def populate_diagnostics(self):
@@ -644,95 +627,64 @@ class GensetIOController:
     def create_dbus_service(self, input_states, relay_states):
         """Create and register D-Bus using the first valid hardware snapshot."""
 
-        self.service = VeDbusService(SERVICE_NAME, register=False)
+        self.service = create_service()
 
         # Adopt the physical relay states before exposing the service.
         with self.relay_state_lock:
             self.desired_relay_states.update(relay_states)
 
-        # Device information
-
-        self.service.add_path("/DeviceInstance", value=DEVICE_INSTANCE)
-        self.service.add_path("/ProductName", value=PRODUCT_NAME)
-        self.service.add_path("/Connected", value=1)
-        self.service.add_path("/Mgmt/Connection", value="Local")
-        self.service.add_path("/Mgmt/ProcessName", value=__file__)
-        self.service.add_path("/Mgmt/ProcessVersion", value=VERSION)
-
         # Inputs
 
         for input_id, config in chain(INPUTS.items(), DIAGNOSTICS.items()):
 
-            base = f"/GenericInput/{input_id}"
-            name = config["name"]
-
-            self.service.add_path(base + "/Name", value=name)
-            self.service.add_path(
-                base + "/Value",
-                value=input_states[input_id] if input_id in INPUTS else 0
-            )
-            self.service.add_path(base + "/Status", value=0)
-            self.service.add_path(base + "/Settings/CustomName", value=name)
-            self.service.add_path(base + "/Settings/Group", config["group"])
-            self.service.add_path(base + "/Settings/Type", value=0)
-
-            # Map each integer input value to its displayed text label.
-            # The D-Bus value is a JSON-encoded list of strings.
-            self.service.add_path(
-                base + "/Settings/Labels",
-                value=dbus.Array(
-                    [dbus.String(label) for label in config.get("labels", [])],
-                    signature="s",
-                    variant_level=1
-                )
-            )
-            self.service.add_path(base + "/Settings/ValidTypes", value=1)
-
             show_ui_control = 0
             if config.get("show_in_local"):
                 show_ui_control += 2
             if config.get("show_in_vrm"):
                 show_ui_control += 4
-            self.service.add_path(base + "/Settings/ShowUIControl", value=show_ui_control)
 
-            print(f"Registered input: {name}")
+            initial_value = input_states[input_id] if input_id in INPUTS else 0
+
+            self.inputs[input_id] = create_input(
+                self.service,
+                input_id,
+                config["name"],
+                value=initial_value,
+                labels=config.get("labels"),
+                group=config["group"],
+                show_ui=show_ui_control
+            )
+
+            print(f"Registered input: {config['name']}")
+
         # Relays
 
         for relay_id, config in RELAYS.items():
 
-            base = f"/SwitchableOutput/{relay_id}"
-            name = config["name"]
-            initial = relay_states[relay_id]
-
-            self.service.add_path(base + "/Name", value=name)
-            self.service.add_path(
-                base + "/State", value=initial, writeable=True, onchangecallback=partial(self.relay_changed, relay_id)
-            )
-            status = 0x09 if initial else 0x00
-            if config.get("disable_control"):
-                status |= 0x20
-            self.service.add_path(base + "/Status", value=status)
-
-            self.service.add_path(base + "/Settings/CustomName", value=name)
-            self.service.add_path(base + "/Settings/Group", config["group"])
-            # self.service.add_path(base + "/Auto", value=0)
-
-            self.service.add_path(base + "/Settings/Type", value=1)
-            self.service.add_path(base + "/Settings/ValidTypes", value=2)
-
             show_ui_control = 0
             if config.get("show_in_local"):
                 show_ui_control += 2
             if config.get("show_in_vrm"):
                 show_ui_control += 4
-            self.service.add_path(base + "/Settings/ShowUIControl", value=show_ui_control)
 
-            print(f"Registered relay: {name}")
+            self.relays[relay_id] = create_relay(
+                self.service,
+                relay_id,
+                config["name"],
+                value=relay_states[relay_id],
+                group=config["group"],
+                show_ui=show_ui_control,
+                disable_control=config.get("disable_control", False),
+                on_change=partial(self.relay_changed, relay_id)
+            )
+
+            print(f"Registered relay: {config['name']}")
+
         # Register after all paths have been created.
 
         self.service.register()
 
-        print(f"D-Bus service registered: {SERVICE_NAME}")
+        print("D-Bus service registered")
 
         for input_id, value in input_states.items():
             print(f"Initial input state: {input_id} = {value}", flush=True)
