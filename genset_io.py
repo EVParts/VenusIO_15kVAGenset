@@ -89,13 +89,13 @@ INPUTS = {
 
 DIAGNOSTICS = {
     "cpu_load_avg_1": {
-        "name": "CPU Load Average 1m",
+        "name": "CPU Load Average  1m",
         "group": "Diagnostics",
         "show_in_local": True,
         "show_in_vrm": True
     },
     "cpu_load_avg_5": {
-        "name": "CPU Load Average 5m",
+        "name": "CPU Load Average  5m",
         "group": "Diagnostics",
         "show_in_local": True,
         "show_in_vrm": True
