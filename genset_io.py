@@ -380,7 +380,7 @@ class GensetIOController:
                     }
 
                     print(
-                        f"Modbus Relays: {relay_registers} -> {reported_states}",
+                        f"Modbus Relays        : {relay_registers}",
                         flush=True
                     )
 
@@ -428,7 +428,7 @@ class GensetIOController:
 
                     print(
                         f"Modbus Relay Feedback: "
-                        f"{relay_registers} -> {relay_feedback}",
+                        f"{relay_registers}",
                         flush=True
                     )
 
@@ -460,7 +460,7 @@ class GensetIOController:
                     }
 
                     print(
-                        f"Modbus Inputs: {input_registers} -> {input_states}",
+                        f"Modbus Inputs        : {input_registers}",
                         flush=True
                     )
 
