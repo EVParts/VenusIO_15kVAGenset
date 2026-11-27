@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-
 import os
 import sys
 import signal
@@ -211,6 +210,8 @@ class GensetIOController:
         self.desired_relay_states = {}
         self.relay_states_initialised = threading.Event()
         self.service_initialised = threading.Event()
+        self.service_initialisation_failed = threading.Event()
+        self.service_initialisation_error = None
 
         self.validate_config()
 
@@ -338,13 +339,22 @@ class GensetIOController:
                                 flush=True
                             )
 
+                            # Reset the callback result before each attempt.
+                            self.service_initialisation_error = None
+                            self.service_initialisation_failed.clear()
+
                             GLib.idle_add(
-                                self.create_dbus_service,
+                                self.create_dbus_service_safe,
                                 initial_input_states,
                                 initial_relay_states
                             )
 
                             while not self.service_initialised.is_set():
+                                if self.service_initialisation_failed.is_set():
+                                    error = self.service_initialisation_error
+                                    raise RuntimeError(
+                                        f"D-Bus service initialisation failed: {error}"
+                                    ) from error
                                 if self.stop_event.wait(0.05):
                                     return
 
@@ -359,6 +369,10 @@ class GensetIOController:
                         "Relay read",
                         MODBUS_UNIT_ID
                     )
+
+                    # A successful Modbus transaction confirms the connection.
+                    if self.service is not None:
+                        GLib.idle_add(self.set_connection_state, 1)
 
                     reported_states = {
                         relay_id: int(value != 0)
@@ -462,7 +476,7 @@ class GensetIOController:
                     # ---------------------------------------------------------
 
                     if diagnostic_counter >= 10:
-                        self.populate_diagnostics()
+                        GLib.idle_add(self.populate_diagnostics)
                         diagnostic_counter = 0
 
                 except Exception as ex:
@@ -482,7 +496,7 @@ class GensetIOController:
             print("Modbus worker stopped", flush=True)
 
     @staticmethod
-    def read_modbus_registers(self, client, address, count, description, unit):
+    def read_modbus_registers(client, address, count, description, unit):
         """Read and validate a block of Modbus holding registers."""
 
         response = client.read_holding_registers(
@@ -506,7 +520,7 @@ class GensetIOController:
         return response.registers
 
     @staticmethod
-    def write_modbus_register(self, client, address, value, description, unit):
+    def write_modbus_register(client, address, value, description, unit):
         """Write and validate a single Modbus holding register."""
 
         response = client.write_register(
@@ -555,7 +569,9 @@ class GensetIOController:
         return False
 
     def populate_diagnostics(self):
-        print("Adding Diagnostic data to dbus")
+        """Update diagnostic values on the GLib main-loop thread."""
+        if self.service is None:
+            return False
         psu_load_avg = psutil.getloadavg()
         cpu_load_avg_1 = round(psu_load_avg[0], 2)
         cpu_load_avg_5 = round(psu_load_avg[1], 2)
@@ -567,6 +583,7 @@ class GensetIOController:
         self.service[f'/GenericInput/cpu_load_avg_5/Value'] = cpu_load_avg_5
         self.service[f'/GenericInput/cpu_load_avg_15/Value'] = cpu_load_avg_15
         self.service[f'/GenericInput/memory_used_percent/Value'] = memory_used_percent
+        return False
 
     def set_connection_state(self, connected):
         """Update the D-Bus connection state on the GLib main-loop thread."""
@@ -613,6 +630,16 @@ class GensetIOController:
     # --------------------------------------------------
     # D-BUS INITIALISATION
     # --------------------------------------------------
+
+    def create_dbus_service_safe(self, input_states, relay_states):
+        """Catch D-Bus setup errors and report them to the Modbus worker."""
+        try:
+            self.create_dbus_service(input_states, relay_states)
+        except Exception as ex:
+            self.service_initialisation_error = ex
+            self.service_initialisation_failed.set()
+            print(f"D-Bus service initialisation failed: {ex}", flush=True)
+        return False
 
     def create_dbus_service(self, input_states, relay_states):
         """Create and register D-Bus using the first valid hardware snapshot."""
@@ -768,5 +795,3 @@ if __name__ == "__main__":
 
         time.sleep(5)
         raise
-
-
